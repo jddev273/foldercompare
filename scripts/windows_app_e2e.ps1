@@ -65,7 +65,12 @@ if ($install.ExitCode -ne 0) { throw "Installer failed with exit code $($install
 
 $installedExe = Join-Path $installDir "FolderCompare.exe"
 if (-not (Test-Path $installedExe)) { throw "Installer completed but app is missing: $installedExe" }
-Write-Host "WINDOWS_INSTALL_OK path=$installedExe"
+foreach ($requiredNotice in @("LICENSE", "THIRD_PARTY_NOTICES.txt")) {
+  $noticePath = Join-Path $installDir $requiredNotice
+  if (-not (Test-Path $noticePath)) { throw "Installer omitted required notice: $noticePath" }
+  if ((Get-Item $noticePath).Length -lt 100) { throw "Installed notice is unexpectedly small: $noticePath" }
+}
+Write-Host "WINDOWS_INSTALL_OK path=$installedExe notices=2"
 Assert-GuiWindow -ExePath $installedExe -Label "installed"
 
 $uninstaller = Join-Path $installDir "unins000.exe"

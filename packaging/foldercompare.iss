@@ -20,9 +20,12 @@ OutputBaseFilename=FolderCompare-setup
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
+LicenseFile=..\LICENSE
 
 [Files]
 Source: "..\dist\FolderCompare.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\FolderCompare"; Filename: "{app}\{#MyAppExeName}"

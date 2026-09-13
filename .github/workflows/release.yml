@@ -25,10 +25,11 @@ jobs:
           if ($tagVersion -ne $pyVersion -or $tagVersion -ne $runtimeVersion) {
             throw "Release version mismatch: tag=$tagVersion pyproject=$pyVersion runtime=$runtimeVersion"
           }
-      - name: Build portable executable
+      - name: Build portable executable and notices
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller==6.22.3 pillow==12.3.0
+          ./scripts/windows_prepare_notices.ps1
           pyinstaller --noconfirm --clean --windowed --onefile --name FolderCompare foldercompare/__main__.py
       - name: Windows core end-to-end test
         run: python scripts/windows_core_e2e.py
@@ -36,7 +37,15 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          Compress-Archive -Path dist/FolderCompare.exe -DestinationPath "FolderCompare-$tag-windows-x64-portable.zip"
+          $archive = "FolderCompare-$tag-windows-x64-portable.zip"
+          Compress-Archive -Path @("dist/FolderCompare.exe", "LICENSE", "THIRD_PARTY_NOTICES.txt") -DestinationPath $archive
+          $verifyDir = Join-Path $env:RUNNER_TEMP "foldercompare-portable-verify"
+          if (Test-Path $verifyDir) { Remove-Item $verifyDir -Recurse -Force }
+          Expand-Archive -Path $archive -DestinationPath $verifyDir
+          foreach ($required in @("FolderCompare.exe", "LICENSE", "THIRD_PARTY_NOTICES.txt")) {
+            if (-not (Test-Path (Join-Path $verifyDir $required))) { throw "Portable ZIP missing required file: $required" }
+          }
+          Write-Host "PORTABLE_NOTICE_ASSERTIONS_OK"
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --version=6.7.1 --no-progress -y
@@ -62,9 +71,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $assets = @(
-            (Get-ChildItem 'FolderCompare-*-windows-x64-portable.zip').FullName
-            (Get-ChildItem 'FolderCompare-*-windows-x64-setup.exe').FullName
-            (Resolve-Path 'SHA256SUMS.txt').Path
-          )
-          gh release create "${{ github.ref_name }}" @assets --generate-notes --title "${{ github.ref_name }}"
+          $tag = "${{ github.ref_name }}"
+          $portable = (Get-ChildItem 'FolderCompare-*-windows-x64-portable.zip').FullName
+          $installer = (Get-ChildItem 'FolderCompare-*-windows-x64-setup.exe').FullName
+          $checksums = (Resolve-Path 'SHA256SUMS.txt').Path
+          $expected = @(
+            (Split-Path $portable -Leaf)
+            (Split-Path $installer -Leaf)
+            'SHA256SUMS.txt'
+          ) | Sort-Object
+
+          # Keep the release private until every expected asset is attached and
+          # independently observed through the GitHub API.
+          gh release create $tag --draft --generate-notes --title $tag
+          gh release upload $tag $portable $installer $checksums --clobber
+
+          $release = gh release view $tag --json assets,isDraft | ConvertFrom-Json
+          $actual = @($release.assets | ForEach-Object { $_.name }) | Sort-Object
+          $delta = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
+          if ($release.isDraft -ne $true -or $actual.Count -ne 3 -or $delta.Count -ne 0) {
+            throw "Release asset verification failed. expected=$($expected -join ',') actual=$($actual -join ',') draft=$($release.isDraft)"
+          }
+          Write-Host "RELEASE_ASSET_ASSERTIONS_OK assets=$($actual -join ',')"
+
+          gh release edit $tag --draft=false --latest
+          $published = gh release view $tag --json assets,isDraft,isPrerelease | ConvertFrom-Json
+          if ($published.isDraft -ne $false -or $published.isPrerelease -ne $false -or @($published.assets).Count -ne 3) {
+            throw "Published release verification failed"
+          }
+          Write-Host "RELEASE_PUBLISHED_OK tag=$tag assets=$(@($published.assets).Count)"

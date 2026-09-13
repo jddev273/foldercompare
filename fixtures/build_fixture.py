@@ -4,11 +4,18 @@ Usage: python fixtures/build_fixture.py <output-dir>
 Creates left/ and right/ without following links.
 """
 from pathlib import Path
-import os, stat, sys
+import os, shutil, stat, sys
 
-base = Path(sys.argv[1] if len(sys.argv) > 1 else "fixture-corpus")
+base = Path(sys.argv[1] if len(sys.argv) > 1 else "fixture-corpus").resolve()
+if base == Path(base.anchor) or base == Path.home().resolve() or base == Path.cwd().resolve():
+    raise SystemExit(f"Refusing unsafe fixture root: {base}")
 left, right = base / "left", base / "right"
-for p in (left, right): p.mkdir(parents=True, exist_ok=True)
+for p in (left, right):
+    if p.is_symlink():
+        p.unlink()
+    elif p.exists():
+        shutil.rmtree(p)
+    p.mkdir(parents=True, exist_ok=False)
 
 def w(root, rel, data):
     p = root / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(data); return p

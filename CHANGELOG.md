@@ -6,6 +6,8 @@
 - Re-scan both trees before returning results and discard verification if paths, types, sizes, timestamps, or link state changed during the run.
 - Add deterministic regressions for case-only cross-root names and files added during verification.
 - Extend packaged Windows GUI proof to execute and verify the add-only missing-file repair, not just open its confirmation dialog.
+- Include the project MIT license plus exact-build Python/Tcl/Tk/PyInstaller notices in both Windows distributables, with packaging assertions.
+- Make the deterministic manual QA fixture builder safely rerunnable by recreating only its `left`/`right` corpus trees.
 
 ## 0.1.4 - 2026-09-13
 
