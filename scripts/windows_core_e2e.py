@@ -42,10 +42,26 @@ def main() -> int:
         assert before["right-only.txt"] is CompareState.RIGHT_ONLY, before
         assert before["nested/same.bin"] is CompareState.SAME, before
 
-        copy_selected(left, right, "modified.txt", overwrite=True)
+        # Safety-first repair is add-only and one-way: a missing original-side file
+        # may be added to the copy, but changed/existing files are never replaced.
+        try:
+            copy_selected(left, right, "modified.txt", overwrite=True)
+            raise AssertionError("existing destination overwrite was not blocked")
+        except FileExistsError:
+            pass
+        assert (right / "modified.txt").read_text(encoding="utf-8") == "rite\n"
         copy_selected(left, right, "left-only.txt", overwrite=False)
-        copy_selected(right, left, "right-only.txt", overwrite=False)
 
+        # A concurrently appearing destination must win; no-replace publication
+        # must never overwrite data another process created.
+        (left / "race.txt").write_text("source", encoding="utf-8")
+        (right / "race.txt").write_text("external", encoding="utf-8")
+        try:
+            copy_selected(left, right, "race.txt", overwrite=False)
+            raise AssertionError("existing race destination was not blocked")
+        except FileExistsError:
+            pass
+        assert (right / "race.txt").read_text(encoding="utf-8") == "external"
 
         # Safety regressions: same roots and overlapping roots must fail before mutation.
         protected = left / "protected.txt"
@@ -79,9 +95,11 @@ def main() -> int:
         child.rmdir()
 
         after = states(left, right)
-        bad = {path: state.value for path, state in after.items() if state is not CompareState.SAME}
-        assert not bad, bad
-        print(f"WINDOWS_CORE_E2E_OK items={len(after)}")
+        assert after["left-only.txt"] is CompareState.SAME, after
+        assert after["modified.txt"] is CompareState.MODIFIED, after
+        assert after["right-only.txt"] is CompareState.RIGHT_ONLY, after
+        assert after["race.txt"] is CompareState.MODIFIED, after
+        print(f"WINDOWS_CORE_E2E_OK items={len(after)} add_only_repair=pass existing_destination_preserved=pass")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

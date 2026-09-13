@@ -115,14 +115,24 @@ def scan_tree(root: str | os.PathLike[str]) -> dict[str, ScanItem]:
         raise ValueError(f"Not a folder: {root_path}")
     result: dict[str, ScanItem] = {}
 
+    def put(item: ScanItem) -> None:
+        key = _scan_key(item.rel_path)
+        previous = result.get(key)
+        if previous is not None and previous.rel_path != item.rel_path:
+            raise OSError(
+                "Case-colliding paths cannot be verified safely on Windows: "
+                f"{previous.rel_path!r} and {item.rel_path!r}. Rename one before verification."
+            )
+        result[key] = item
+
     def walk(directory: Path, rel_base: Path) -> None:
         try:
             entries = list(os.scandir(directory))
         except OSError as exc:
             rel = rel_base.as_posix() or "."
-            result[_scan_key(rel)] = ScanItem(rel, directory, EntryType.OTHER, None, None, None, f"{type(exc).__name__}: {exc}")
+            put(ScanItem(rel, directory, EntryType.OTHER, None, None, None, f"{type(exc).__name__}: {exc}"))
             return
-        entries.sort(key=lambda e: e.name.casefold())
+        entries.sort(key=lambda e: (e.name.casefold(), e.name))
         for entry in entries:
             rel_path = (rel_base / entry.name).as_posix()
             path = Path(entry.path)
@@ -132,21 +142,20 @@ def scan_tree(root: str | os.PathLike[str]) -> dict[str, ScanItem]:
             except OSError:
                 st = None
                 mtime_ns = None
-            is_link = entry.is_symlink() or _is_junction(path)
-            if is_link:
+            if entry.is_symlink() or _is_junction(path):
                 target, error = _read_link(path)
-                result[_scan_key(rel_path)] = ScanItem(rel_path, path, EntryType.LINK, None, mtime_ns, target, error)
+                put(ScanItem(rel_path, path, EntryType.LINK, None, mtime_ns, target, error))
                 continue
             try:
                 if entry.is_dir(follow_symlinks=False):
-                    result[_scan_key(rel_path)] = ScanItem(rel_path, path, EntryType.DIRECTORY, None, mtime_ns)
+                    put(ScanItem(rel_path, path, EntryType.DIRECTORY, None, mtime_ns))
                     walk(path, rel_base / entry.name)
                 elif entry.is_file(follow_symlinks=False):
-                    result[_scan_key(rel_path)] = ScanItem(rel_path, path, EntryType.FILE, st.st_size if st else None, mtime_ns)
+                    put(ScanItem(rel_path, path, EntryType.FILE, st.st_size if st else None, mtime_ns))
                 else:
-                    result[_scan_key(rel_path)] = ScanItem(rel_path, path, EntryType.OTHER, st.st_size if st else None, mtime_ns)
+                    put(ScanItem(rel_path, path, EntryType.OTHER, st.st_size if st else None, mtime_ns))
             except OSError as exc:
-                result[_scan_key(rel_path)] = ScanItem(rel_path, path, EntryType.OTHER, None, mtime_ns, None, f"{type(exc).__name__}: {exc}")
+                put(ScanItem(rel_path, path, EntryType.OTHER, None, mtime_ns, None, f"{type(exc).__name__}: {exc}"))
     walk(root_path, Path())
     return result
 
@@ -343,7 +352,20 @@ def _copy_plain_object(source: Path, staging: Path) -> None:
     raise ValueError(f"Unsupported special filesystem type: {source}")
 
 
+def _commit_missing_file_no_replace(staging: Path, destination: Path) -> None:
+    """Publish a staged regular file only if destination is still absent."""
+    if os.name == "nt":
+        # Windows rename fails when the destination already exists.
+        os.rename(staging, destination)
+        return
+    # POSIX hard-link creation is atomic and fails with EEXIST. Staging is a
+    # sibling regular file, so source and destination are on the same filesystem.
+    os.link(staging, destination, follow_symlinks=False)
+    staging.unlink()
+
+
 def copy_selected(source_root: str | os.PathLike[str], destination_root: str | os.PathLike[str], rel_path: str, *, overwrite: bool) -> tuple[Path, Path]:
+    """Repair one missing regular file from original to copy without overwriting."""
     source_root_path, destination_root_path = validate_root_pair(source_root, destination_root)
     rel = _safe_rel_path(rel_path)
     _ensure_plain_parents(source_root_path, rel)
@@ -354,46 +376,19 @@ def copy_selected(source_root: str | os.PathLike[str], destination_root: str | o
         raise FileNotFoundError(source)
     if _path_identity(source) == _path_identity(destination):
         raise ValueError("Source and destination resolve to the same path; copy blocked.")
-    destination_signature = _path_signature(destination)
-    exists = destination_signature is not None
-    if exists and not overwrite:
-        raise FileExistsError(destination)
+    if source.is_symlink() or _is_junction(source) or not source.is_file():
+        raise ValueError("Safe repair copies only missing regular files. Folders, links, junctions, and special objects are compare-only.")
+    if _path_signature(destination) is not None:
+        raise FileExistsError("Destination already exists. FolderCompare will not overwrite existing data; review changed items manually.")
     destination.parent.mkdir(parents=True, exist_ok=True)
 
     token = uuid.uuid4().hex
     staging = destination.parent / f".{destination.name}.foldercompare-stage-{token}"
-    backup = destination.parent / f".{destination.name}.foldercompare-backup-{token}"
     try:
         _copy_plain_object(source, staging)
         _verify_staged_copy(source, staging)
-        # Recheck containment and ensure another process did not change the
-        # destination while staging was in progress. Never overwrite a path
-        # we did not actually inspect before the copy began.
         _ensure_plain_parents(destination_root_path, rel)
-        if _path_signature(destination) != destination_signature:
-            raise OSError("Destination changed while the copy was being staged; operation cancelled without replacement.")
-        if not exists:
-            os.replace(staging, destination)
-            return source, destination
-
-        os.replace(destination, backup)
-        try:
-            os.replace(staging, destination)
-        except Exception:
-            try:
-                if destination.exists() or destination.is_symlink() or _is_junction(destination):
-                    _remove_path(destination)
-                os.replace(backup, destination)
-            finally:
-                if staging.exists() or staging.is_symlink() or _is_junction(staging):
-                    _remove_path(staging)
-            raise
-        try:
-            _remove_path(backup)
-        except OSError:
-            # Replacement succeeded; an orphaned hidden backup is safer than
-            # reporting the copy as failed after the destination is already good.
-            pass
+        _commit_missing_file_no_replace(staging, destination)
         return source, destination
     except Exception:
         if staging.exists() or staging.is_symlink() or _is_junction(staging):

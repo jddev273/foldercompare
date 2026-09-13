@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "foldercompare"
-version = "0.1.3"
-description = "Verify that a folder copy or backup matches its original."
+version = "0.1.4"
+description = "A safety-first Windows folder verifier for checking whether a copy or backup matches its original content."
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}

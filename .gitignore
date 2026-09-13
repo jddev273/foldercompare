@@ -6,3 +6,5 @@ dist/
 release/
 *.spec
 fixture-corpus/
+.verify-v*/
+.ci-proof-v*/

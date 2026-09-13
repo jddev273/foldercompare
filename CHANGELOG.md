@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.4 - 2026-09-13
+
+- Make repair add-only: copy only missing regular files and never overwrite existing destination data.
+- Publish staged repairs with an atomic no-replace operation, closing the commit-time destination race.
+- Fail closed on Windows casefold path collisions instead of silently dropping one entry.
+- Lock verification mode while work runs and invalidate displayed results when the mode changes.
+- Block normal window close while verification or copy is active.
+- Refresh release metadata and gate tag releases with packaged Windows GUI proof.
+
+## 0.1.3 - 2026-09-13
+
+- Reframe the UI around original-vs-copy verification with plain-English results and Problems-only default.
+- Add same/overlapping-root guards, path traversal protection, staged-copy verification, stale-root invalidation, and safer link handling.
+- Pin Windows build dependencies and add deterministic packaged-GUI validation.
+
 ## 0.1.2 - 2026-09-13
 
 - Add native Windows visual proof for the packaged app and exact-copy confirmation flow.

@@ -42,6 +42,8 @@ class App(tk.Tk):
         self._build_ui()
         self.left_var.trace_add("write", self._root_edited)
         self.right_var.trace_add("write", self._root_edited)
+        self.full_var.trace_add("write", self._verification_mode_edited)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_style(self) -> None:
         style = ttk.Style(self)
@@ -68,8 +70,8 @@ class App(tk.Tk):
         header = ttk.Frame(outer)
         header.pack(fill="x", pady=(0, 14))
         ttk.Label(header, text="FolderCompare", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(header, text="Did everything copy? Know for sure.", style="Verdict.TLabel").pack(anchor="w", pady=(3, 0))
-        ttk.Label(header, text="Verify an original folder against a copy, backup, migration, or restored drive — without sync or merge rules.", style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
+        ttk.Label(header, text="Did the files copy? Verify their contents.", style="Verdict.TLabel").pack(anchor="w", pady=(3, 0))
+        ttk.Label(header, text="Verify ordinary file data and tree presence in a copy, backup, migration, or restored drive — without sync or merge rules.", style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
 
         pickers = ttk.Frame(outer)
         pickers.pack(fill="x")
@@ -94,8 +96,9 @@ class App(tk.Tk):
         controls.pack(fill="x", pady=12)
         self.compare_btn = ttk.Button(controls, text="Verify folders", style="Primary.TButton", command=self.compare)
         self.compare_btn.pack(side="left")
-        ttk.Checkbutton(controls, text="Extra assurance: byte-for-byte verify matches", variable=self.full_var).pack(side="left", padx=14)
-        self.copy_btn = ttk.Button(controls, text="Copy selected → backup", command=self._copy, state="disabled", underline=0)
+        self.full_check = ttk.Checkbutton(controls, text="Extra assurance: byte-for-byte verify matches", variable=self.full_var)
+        self.full_check.pack(side="left", padx=14)
+        self.copy_btn = ttk.Button(controls, text="Copy missing file → backup", command=self._copy, state="disabled", underline=0)
         self.copy_btn.pack(side="right")
         self.bind_all("<Alt-c>", lambda _event: self.copy_btn.invoke())
 
@@ -157,6 +160,22 @@ class App(tk.Tk):
             self.copy_btn.configure(state="disabled")
             self.verdict_var.set("Folders changed — verify again before copying anything.")
 
+    def _verification_mode_edited(self, *_args) -> None:
+        if self._busy:
+            return
+        if self._comparison_roots is not None:
+            self._comparison_roots = None
+            self.final_results = []
+            self._clear_tree()
+            self.copy_btn.configure(state="disabled")
+            self.verdict_var.set("Verification mode changed — verify again.")
+
+    def _on_close(self) -> None:
+        if self._busy:
+            messagebox.showinfo("FolderCompare is working", "Please wait for the current operation to finish.")
+            return
+        self.destroy()
+
     @staticmethod
     def _fmt_size(value: int | None) -> str:
         if value is None:
@@ -187,6 +206,7 @@ class App(tk.Tk):
         for widget in self.path_entries + self.browse_buttons:
             widget.configure(state="disabled" if busy else "normal")
         self.filter_box.configure(state="disabled" if busy else "readonly")
+        self.full_check.configure(state="disabled" if busy else "normal")
         self.copy_btn.configure(state="disabled")
         if not busy:
             self._update_copy_state()
@@ -255,8 +275,8 @@ class App(tk.Tk):
             if self._matches_filter(entry):
                 self._upsert(entry)
                 if (first_repairable is None
-                        and entry.state in (CompareState.MODIFIED, CompareState.LEFT_ONLY)
-                        and entry.kind in (EntryType.FILE, EntryType.DIRECTORY)
+                        and entry.state is CompareState.LEFT_ONLY
+                        and entry.kind is EntryType.FILE
                         and entry.left is not None):
                     first_repairable = self.path_to_iid.get(entry.rel_path)
         if first_repairable:
@@ -305,7 +325,7 @@ class App(tk.Tk):
                 return
             if kind == "copy_error":
                 self._set_busy(False)
-                self.status_var.set("Copy failed. Existing destination was preserved whenever replacement did not commit.")
+                self.status_var.set("Copy failed safely. Existing destination data was not overwritten.")
                 messagebox.showerror("Copy failed safely", str(payload))
                 return
         if self._busy:
@@ -323,8 +343,8 @@ class App(tk.Tk):
             not self._busy
             and self._comparison_roots is not None
             and entry is not None
-            and entry.state in (CompareState.MODIFIED, CompareState.LEFT_ONLY)
-            and entry.kind in (EntryType.FILE, EntryType.DIRECTORY)
+            and entry.state is CompareState.LEFT_ONLY
+            and entry.kind is EntryType.FILE
             and entry.left is not None
         )
         self.copy_btn.configure(state="normal" if allowed else "disabled")
@@ -333,32 +353,26 @@ class App(tk.Tk):
         if self._busy or self._comparison_roots is None:
             return
         entry = self._selected_entry()
-        if entry is None or entry.state not in (CompareState.MODIFIED, CompareState.LEFT_ONLY) or entry.kind not in (EntryType.FILE, EntryType.DIRECTORY):
-            messagebox.showinfo("Nothing to copy", "Choose a changed or missing file/folder from the original side.")
+        if entry is None or entry.state is not CompareState.LEFT_ONLY or entry.kind is not EntryType.FILE:
+            messagebox.showinfo("Nothing safe to copy", "Choose a file that is missing from the copy. Changed files and folders are compare-only in this safety-first release.")
             return
         src_root, dst_root = self._comparison_roots
         src = Path(src_root) / entry.rel_path
         dst = Path(dst_root) / entry.rel_path
-        overwrite = path_present(dst)
-        if overwrite and dst.is_dir() and entry.kind is not EntryType.DIRECTORY:
-            consequence = "\n\nWARNING: the destination folder and all contents will be replaced by this file."
-        elif overwrite and dst.is_file() and entry.kind is EntryType.DIRECTORY:
-            consequence = "\n\nWARNING: the destination file will be replaced by this folder."
-        elif overwrite and entry.kind is EntryType.DIRECTORY:
-            consequence = "\n\nThe existing destination folder will be replaced only after the new folder has been fully staged and verified."
-        elif overwrite:
-            consequence = "\n\nThe existing destination file will be replaced only after the new file has been staged and verified."
-        else:
-            consequence = ""
-        prompt = f"Original → Copy / backup\n\nSource:\n{src}\n\nDestination:\n{dst}\n\nExisting destination: {'YES' if overwrite else 'NO'}{consequence}\n\nProceed?"
-        if not messagebox.askyesno("Confirm copy to backup", prompt, icon="warning" if overwrite else "question", default="no"):
+        if path_present(dst):
+            self._comparison_roots = None
+            self.copy_btn.configure(state="disabled")
+            messagebox.showerror("Destination changed", "The destination now exists. Verify the folders again; FolderCompare will not overwrite it.")
+            return
+        prompt = f"Original → Copy / backup\n\nSource:\n{src}\n\nDestination:\n{dst}\n\nThis action adds the missing file only. Existing data is never overwritten.\n\nProceed?"
+        if not messagebox.askyesno("Confirm copy to backup", prompt, icon="question", default="no"):
             return
         self._set_busy(True)
-        self.status_var.set("Staging and verifying copy before replacement…")
+        self.status_var.set("Staging and verifying the missing file before safe publication…")
 
         def worker() -> None:
             try:
-                copy_selected(src_root, dst_root, entry.rel_path, overwrite=overwrite)
+                copy_selected(src_root, dst_root, entry.rel_path, overwrite=False)
                 self._events.put(("copy_done", dst))
             except Exception as exc:
                 self._events.put(("copy_error", exc))
