@@ -38,10 +38,10 @@ jobs:
         run: ./scripts/windows_app_e2e.ps1 -PortableExe "dist\FolderCompare.exe" -InstallerExe "FolderCompare-validation-windows-x64-setup.exe"
       - name: Capture real Windows GUI proof
         shell: pwsh
-        run: python scripts/windows_visual_proof.py --exe "dist\FolderCompare.exe" --output "artifacts\windows-foldercompare-working.png"
+        run: python scripts/windows_visual_proof.py --exe "dist\FolderCompare.exe" --output "artifacts\windows-foldercompare-working.png" --copy-output "artifacts\windows-copy-confirmation.png"
       - name: Upload Windows GUI proof
         uses: actions/upload-artifact@v4
         with:
           name: windows-gui-proof
-          path: artifacts/windows-foldercompare-working.png
+          path: artifacts/*.png
           if-no-files-found: error

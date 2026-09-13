@@ -64,20 +64,26 @@ def find_window(title: str, timeout: float = 20.0) -> tuple[int, int]:
     raise RuntimeError(f"Timed out waiting for visible window titled {title!r}")
 
 
-def capture_window(hwnd: int, output: Path) -> tuple[int, int]:
+class RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+def get_window_rect(hwnd: int) -> RECT:
+    rect = RECT()
+    if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        raise RuntimeError("GetWindowRect failed")
+    return rect
+
+
+def capture_window(hwnd: int, output: Path, *, min_width: int = 800, min_height: int = 500) -> tuple[int, int]:
     from PIL import ImageGrab, ImageStat
 
-    class RECT(ctypes.Structure):
-        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long), ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
-
     user32 = ctypes.windll.user32
-    rect = RECT()
-    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-        raise RuntimeError("GetWindowRect failed")
+    rect = get_window_rect(hwnd)
     width = rect.right - rect.left
     height = rect.bottom - rect.top
-    if width < 800 or height < 500:
-        raise RuntimeError(f"Unexpected app window size: {width}x{height}")
+    if width < min_width or height < min_height:
+        raise RuntimeError(f"Unexpected window size: {width}x{height}")
 
     user32.ShowWindow(hwnd, 9)  # SW_RESTORE
     user32.SetForegroundWindow(hwnd)
@@ -92,6 +98,20 @@ def capture_window(hwnd: int, output: Path) -> tuple[int, int]:
     return image.size
 
 
+def click_relative(hwnd: int, x_ratio: float, y_ratio: float) -> None:
+    """Click a stable point inside the fixed proof viewport without adding GUI-test dependencies."""
+    user32 = ctypes.windll.user32
+    rect = get_window_rect(hwnd)
+    x = rect.left + int((rect.right - rect.left) * x_ratio)
+    y = rect.top + int((rect.bottom - rect.top) * y_ratio)
+    user32.SetForegroundWindow(hwnd)
+    user32.SetCursorPos(x, y)
+    time.sleep(0.15)
+    user32.mouse_event(0x0002, 0, 0, 0, 0)  # MOUSEEVENTF_LEFTDOWN
+    user32.mouse_event(0x0004, 0, 0, 0, 0)  # MOUSEEVENTF_LEFTUP
+    time.sleep(0.35)
+
+
 def main() -> int:
     if os.name != "nt":
         raise SystemExit("windows_visual_proof.py must run on Windows")
@@ -99,10 +119,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--copy-output", required=True)
     args = parser.parse_args()
 
     exe = Path(args.exe).resolve()
     output = Path(args.output).resolve()
+    copy_output = Path(args.copy_output).resolve()
     if not exe.is_file():
         raise FileNotFoundError(exe)
 
@@ -120,6 +142,21 @@ def main() -> int:
         if output.stat().st_size < 20_000:
             raise RuntimeError(f"Screenshot is suspiciously small: {output.stat().st_size} bytes")
         print(f"WINDOWS_VISUAL_PROOF_OK path={output} size={size[0]}x{size[1]} bytes={output.stat().st_size} hwnd={hwnd} pid={window_pid}")
+
+        # Demonstrate the destructive-action safeguard too: select modified.txt,
+        # press Copy →, and capture the modal before answering it. The proof
+        # fixture and app viewport are fixed, so relative coordinates are stable.
+        click_relative(hwnd, 0.13, 0.59)  # modified.txt row
+        click_relative(hwnd, 0.92, 0.33)  # Copy → button
+        dialog_hwnd, dialog_pid = find_window("Confirm exact copy", timeout=8.0)
+        dialog_size = capture_window(dialog_hwnd, copy_output, min_width=360, min_height=180)
+        if copy_output.stat().st_size < 5_000:
+            raise RuntimeError(f"Copy-dialog screenshot is suspiciously small: {copy_output.stat().st_size} bytes")
+        print(
+            f"WINDOWS_COPY_DIALOG_PROOF_OK path={copy_output} "
+            f"size={dialog_size[0]}x{dialog_size[1]} bytes={copy_output.stat().st_size} "
+            f"hwnd={dialog_hwnd} pid={dialog_pid}"
+        )
     finally:
         subprocess.run(["taskkill", "/IM", "FolderCompare.exe", "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
