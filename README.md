@@ -10,6 +10,12 @@ FolderCompare is a deliberately narrow, Windows-first open-source folder compari
 
 *Actual packaged `FolderCompare.exe` running on GitHub's Windows runner against a real comparison fixture with byte-for-byte verification enabled. Windows Validation also installs the Inno Setup build, launches the installed app, and uninstalls it.*
 
+### Copy is explicit
+
+![FolderCompare exact-copy confirmation on Windows](docs/windows-copy-confirmation.png)
+
+*The real Windows confirmation dialog names the direction, exact source, exact destination, and whether the operation will overwrite before anything is copied.*
+
 ## What V1 does
 
 - Progressive comparison: path → type → size → metadata → content/hash as needed.
