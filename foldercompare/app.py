@@ -95,8 +95,9 @@ class App(tk.Tk):
         self.compare_btn = ttk.Button(controls, text="Verify folders", style="Primary.TButton", command=self.compare)
         self.compare_btn.pack(side="left")
         ttk.Checkbutton(controls, text="Extra assurance: byte-for-byte verify matches", variable=self.full_var).pack(side="left", padx=14)
-        self.copy_btn = ttk.Button(controls, text="Copy selected → backup", command=self._copy, state="disabled")
+        self.copy_btn = ttk.Button(controls, text="Copy selected → backup", command=self._copy, state="disabled", underline=0)
         self.copy_btn.pack(side="right")
+        self.bind_all("<Alt-c>", lambda _event: self.copy_btn.invoke())
 
         ttk.Label(outer, textvariable=self.verdict_var, style="Verdict.TLabel").pack(fill="x", pady=(0, 10))
 
@@ -249,9 +250,19 @@ class App(tk.Tk):
 
     def _apply_filter(self) -> None:
         self._clear_tree()
+        first_repairable: str | None = None
         for entry in self.final_results:
             if self._matches_filter(entry):
                 self._upsert(entry)
+                if (first_repairable is None
+                        and entry.state in (CompareState.MODIFIED, CompareState.LEFT_ONLY)
+                        and entry.kind in (EntryType.FILE, EntryType.DIRECTORY)
+                        and entry.left is not None):
+                    first_repairable = self.path_to_iid.get(entry.rel_path)
+        if first_repairable:
+            self.tree.selection_set(first_repairable)
+            self.tree.focus(first_repairable)
+            self.tree.see(first_repairable)
         self._update_copy_state()
 
     def _drain_events(self) -> None:

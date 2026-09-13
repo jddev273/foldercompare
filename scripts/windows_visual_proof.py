@@ -112,6 +112,21 @@ def click_relative(hwnd: int, x_ratio: float, y_ratio: float) -> None:
     time.sleep(0.35)
 
 
+def invoke_copy_mnemonic(hwnd: int) -> None:
+    """Invoke the app's real Alt+C copy mnemonic after verification selects a repairable problem."""
+    user32 = ctypes.windll.user32
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.2)
+    VK_MENU = 0x12
+    VK_C = 0x43
+    KEYEVENTF_KEYUP = 0x0002
+    user32.keybd_event(VK_MENU, 0, 0, 0)
+    user32.keybd_event(VK_C, 0, 0, 0)
+    user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)
+    user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+    time.sleep(0.4)
+
+
 def main() -> int:
     if os.name != "nt":
         raise SystemExit("windows_visual_proof.py must run on Windows")
@@ -143,28 +158,11 @@ def main() -> int:
             raise RuntimeError(f"Screenshot is suspiciously small: {output.stat().st_size} bytes")
         print(f"WINDOWS_VISUAL_PROOF_OK path={output} size={size[0]}x{size[1]} bytes={output.stat().st_size} hwnd={hwnd} pid={window_pid}")
 
-        # Demonstrate the repair safeguard too: select a copy-eligible problem row,
-        # press Copy selected → backup, and capture the modal before answering it.
-        # The product layout deliberately changed in v0.1.3, so do not bind the proof
-        # to one brittle coordinate pair. Probe a tiny bounded set around the known
-        # problem-list and right-side action regions and stop as soon as the exact
-        # confirmation dialog appears. This still proves the real packaged GUI path.
-        dialog_hwnd = dialog_pid = None
-        row_candidates = (0.59, 0.62, 0.56, 0.53, 0.65)
-        button_candidates = (0.26, 0.28, 0.30, 0.24, 0.32)
-        for row_y in row_candidates:
-            click_relative(hwnd, 0.16, row_y)
-            for button_y in button_candidates:
-                click_relative(hwnd, 0.90, button_y)
-                try:
-                    dialog_hwnd, dialog_pid = find_window("Confirm copy to backup", timeout=0.7)
-                    break
-                except RuntimeError:
-                    pass
-            if dialog_hwnd is not None:
-                break
-        if dialog_hwnd is None or dialog_pid is None:
-            raise RuntimeError("Could not open the real copy-confirmation dialog from the packaged verification-first UI")
+        # Demonstrate the repair safeguard too. Verification auto-selects the
+        # first repairable problem and the real app exposes Alt+C as the Copy
+        # mnemonic, so this proof uses the same accessible command path a user can.
+        invoke_copy_mnemonic(hwnd)
+        dialog_hwnd, dialog_pid = find_window("Confirm copy to backup", timeout=8.0)
         dialog_size = capture_window(dialog_hwnd, copy_output, min_width=360, min_height=180)
         if copy_output.stat().st_size < 5_000:
             raise RuntimeError(f"Copy-dialog screenshot is suspiciously small: {copy_output.stat().st_size} bytes")
