@@ -4,9 +4,14 @@
   "homepage": "https://github.com/jddev273/foldercompare",
   "license": "MIT",
   "url": "https://github.com/jddev273/foldercompare/releases/download/v0.1.1/FolderCompare-v0.1.1-windows-x64-portable.zip",
-  "hash": "REPLACE_WITH_RELEASE_SHA256",
+  "hash": "2805295bee701f4146c19af38ab0fae830bc3d968316c8bdb6d5d8fc3f9ae2db",
   "bin": "FolderCompare.exe",
-  "shortcuts": [["FolderCompare.exe", "FolderCompare"]],
+  "shortcuts": [
+    [
+      "FolderCompare.exe",
+      "FolderCompare"
+    ]
+  ],
   "checkver": "github",
   "autoupdate": {
     "url": "https://github.com/jddev273/foldercompare/releases/download/v$version/FolderCompare-v$version-windows-x64-portable.zip"

@@ -50,12 +50,9 @@ Copy is intentionally not sync. It acts only on the selected path after a confir
 ## Packaging / future distribution
 
 - `.github/workflows/release.yml` builds the portable ZIP and installer.
-- `packaging/winget/` contains a manifest template for later WinGet submission.
-- `packaging/scoop/` contains a manifest template for later Scoop submission.
+- `packaging/winget/` records the published installer URL/SHA-256 and the safe `wingetcreate` path for later submission.
+- `packaging/scoop/` contains a versioned manifest with the published portable ZIP SHA-256.
 
-## Support
-
-If FolderCompare saves you time, you can support ongoing maintenance through [GitHub Sponsors](https://github.com/sponsors/jddev273).
 
 ## License
 
