@@ -126,6 +126,17 @@ class CompareCoreTests(unittest.TestCase):
         a.chmod(stat.S_IREAD); b.chmod(stat.S_IREAD)
         self.assertEqual(states(self.left, self.right)["ro.txt"].state, CompareState.SAME)
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO unavailable")
+    def test_special_type_fails_closed_not_same(self):
+        os.mkfifo(self.left / "pipe")
+        os.mkfifo(self.right / "pipe")
+        e = states(self.left, self.right)["pipe"]
+        self.assertEqual(e.kind, EntryType.OTHER)
+        self.assertEqual(e.state, CompareState.MODIFIED)
+        self.assertIn("unsupported", e.detail)
+        with self.assertRaises(ValueError):
+            copy_selected(self.left, self.right, "pipe", overwrite=True)
+
     def test_large_multichunk_file(self):
         data = (b"0123456789abcdef" * 200000)
         self.write(self.left, "large.bin", data)

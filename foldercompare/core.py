@@ -178,9 +178,10 @@ def compare_trees(
                 state, detail = CompareState.MODIFIED, f"read error: {exc}"
             entry = CompareEntry(rel, state, EntryType.FILE, left, right, detail)
         else:
-            same = (left.size, left.mtime_ns) == (right.size, right.mtime_ns)
-            entry = CompareEntry(rel, CompareState.SAME if same else CompareState.MODIFIED, EntryType.OTHER, left, right,
-                                 "metadata match" if same else "metadata differs")
+            # The four-state model has no "unsupported" state. Fail closed: special
+            # filesystem objects can differ in semantics that size/mtime cannot prove.
+            entry = CompareEntry(rel, CompareState.MODIFIED, EntryType.OTHER, left, right,
+                                 "unsupported special filesystem type")
         results[rel] = entry
         if on_entry:
             on_entry(entry)
@@ -223,6 +224,8 @@ def copy_selected(source_root: str | os.PathLike[str], destination_root: str | o
         os.symlink(target, destination, target_is_directory=source.is_dir())
     elif source.is_dir():
         shutil.copytree(source, destination, symlinks=True)
-    else:
+    elif source.is_file():
         shutil.copy2(source, destination, follow_symlinks=False)
+    else:
+        raise ValueError(f"Unsupported special filesystem type: {source}")
     return source, destination
