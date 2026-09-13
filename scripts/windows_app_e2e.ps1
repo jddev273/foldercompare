@@ -7,25 +7,51 @@ $ErrorActionPreference = "Stop"
 
 function Assert-GuiWindow([string]$ExePath, [string]$Label) {
   if (-not (Test-Path $ExePath)) { throw "$Label executable missing: $ExePath" }
-  $p = Start-Process -FilePath $ExePath -PassThru
+  $resolved = (Resolve-Path $ExePath).Path
+  $processName = [IO.Path]::GetFileNameWithoutExtension($resolved)
+  $startedAt = Get-Date
+  $launcher = Start-Process -FilePath $resolved -PassThru
+  $matched = $null
   try {
-    $deadline = (Get-Date).AddSeconds(15)
-    $title = ""
-    $handle = 0
+    $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {
       Start-Sleep -Milliseconds 500
-      $p.Refresh()
-      if ($p.HasExited) { throw "$Label exited before its GUI was validated (exit $($p.ExitCode))" }
-      $title = $p.MainWindowTitle
-      $handle = $p.MainWindowHandle
-      if ($handle -ne 0 -and $title -eq "FolderCompare") { break }
+      # PyInstaller --onefile uses a bootstrap parent and a child process. The
+      # child, not necessarily Start-Process's returned process, owns Tk's HWND.
+      $candidates = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+      foreach ($candidate in $candidates) {
+        try {
+          $candidate.Refresh()
+          if ($candidate.StartTime -lt $startedAt.AddSeconds(-1)) { continue }
+          if ($candidate.MainWindowHandle -ne 0 -and $candidate.MainWindowTitle -eq "FolderCompare") {
+            $matched = $candidate
+            break
+          }
+        }
+        catch {
+          # Process may disappear between enumeration and inspection.
+        }
+      }
+      if ($null -ne $matched) { break }
+      if ($launcher.HasExited -and $candidates.Count -eq 0) {
+        throw "$Label exited before its GUI was validated (launcher exit $($launcher.ExitCode))"
+      }
     }
-    if ($handle -eq 0) { throw "$Label never exposed a top-level Windows GUI handle" }
-    if ($title -ne "FolderCompare") { throw "$Label window title was '$title', expected 'FolderCompare'" }
-    Write-Host "WINDOWS_GUI_OK label=$Label pid=$($p.Id) hwnd=$handle title=$title"
+    if ($null -eq $matched) {
+      $snapshot = @(Get-Process -Name $processName -ErrorAction SilentlyContinue | ForEach-Object {
+        try { "pid=$($_.Id), hwnd=$($_.MainWindowHandle), title='$($_.MainWindowTitle)'" } catch { "pid=$($_.Id), unavailable" }
+      }) -join "; "
+      throw "$Label never exposed the expected FolderCompare top-level window. Processes: $snapshot"
+    }
+    Write-Host "WINDOWS_GUI_OK label=$Label pid=$($matched.Id) hwnd=$($matched.MainWindowHandle) title=$($matched.MainWindowTitle)"
   }
   finally {
-    if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+    @(Get-Process -Name $processName -ErrorAction SilentlyContinue) | ForEach-Object {
+      try {
+        if ($_.StartTime -ge $startedAt.AddSeconds(-1)) { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+      }
+      catch {}
+    }
   }
 }
 
