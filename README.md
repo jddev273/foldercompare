@@ -25,14 +25,11 @@ FolderCompare is a deliberately narrow, Windows-first open-source folder compari
 - Symlinks and Windows junctions are treated as links and are not traversed by the scanner.
 - No sync, merge, rename detection, accounts, cloud, AI, plugins, or background filesystem mutation.
 
-## Windows downloads
+## Download for Windows
 
-GitHub Releases builds two artifacts from each `v*` tag on a clean Windows runner:
+**[Installer (.exe)](https://github.com/jddev273/foldercompare/releases/download/v0.1.2/FolderCompare-v0.1.2-windows-x64-setup.exe)** · **[Portable (.zip)](https://github.com/jddev273/foldercompare/releases/download/v0.1.2/FolderCompare-v0.1.2-windows-x64-portable.zip)** · [Checksums / release notes](https://github.com/jddev273/foldercompare/releases/tag/v0.1.2)
 
-1. `FolderCompare-<version>-windows-x64-portable.zip` — single-file portable executable.
-2. `FolderCompare-<version>-windows-x64-setup.exe` — Inno Setup installer.
-
-The release workflow also publishes SHA-256 checksums.
+The release workflow builds both artifacts on a clean Windows runner, runs the Windows end-to-end checks, and publishes SHA-256 checksums.
 
 ## Run from source
 
