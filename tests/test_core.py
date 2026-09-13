@@ -173,7 +173,7 @@ class CompareCoreTests(unittest.TestCase):
                 compare_trees(self.left, self.right, full_verify=True)
 
     def test_same_bytes_same_mtime_object_swap_never_verifies_same(self):
-        left_file = self.write(self.left, "same.txt", b"MATCH")
+        left_file = self.write(self.left, "same.txt", b"MATCH").resolve()
         self.write(self.right, "same.txt", b"MATCH")
         original = core._sha256_stable
         swapped = False
@@ -201,7 +201,7 @@ class CompareCoreTests(unittest.TestCase):
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlink unavailable")
     def test_regular_file_becoming_symlink_before_read_never_verifies_same(self):
-        left_file = self.write(self.left, "same.txt", b"MATCH")
+        left_file = self.write(self.left, "same.txt", b"MATCH").resolve()
         self.write(self.right, "same.txt", b"MATCH")
         original = core._sha256_stable
         swapped = False
@@ -230,7 +230,7 @@ class CompareCoreTests(unittest.TestCase):
         self.assertIn("identity", entry.detail)
 
     def test_lstat_error_is_reported_as_unsupported_not_guessed(self):
-        blocked = self.write(self.left, "blocked.txt", b"x")
+        blocked = self.write(self.left, "blocked.txt", b"x").resolve()
         real_lstat = os.lstat
 
         def guarded_lstat(path):
