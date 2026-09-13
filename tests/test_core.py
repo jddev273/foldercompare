@@ -1,11 +1,11 @@
 import os
 import stat
 import tempfile
-import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from foldercompare.core import CompareState, EntryType, compare_trees, copy_selected, scan_tree
+from foldercompare.core import CompareState, EntryType, compare_trees, copy_selected, scan_tree, validate_root_pair
 
 
 def states(left: Path, right: Path, full=False):
@@ -30,119 +30,135 @@ class CompareCoreTests(unittest.TestCase):
         return path
 
     def test_same_content_is_same(self):
-        self.write(self.left, "a.txt", b"hello")
-        self.write(self.right, "a.txt", b"hello")
+        self.write(self.left, "a.txt", b"hello"); self.write(self.right, "a.txt", b"hello")
         self.assertEqual(states(self.left, self.right)["a.txt"].state, CompareState.SAME)
 
     def test_same_content_different_mtime_is_still_same(self):
-        a = self.write(self.left, "a.txt", b"hello")
-        b = self.write(self.right, "a.txt", b"hello")
-        os.utime(a, (1, 1)); os.utime(b, (2, 2))
-        e = states(self.left, self.right)["a.txt"]
-        self.assertEqual(e.state, CompareState.SAME)
-        self.assertIn("metadata differs", e.detail)
+        a=self.write(self.left,"a.txt",b"hello"); b=self.write(self.right,"a.txt",b"hello")
+        os.utime(a,(1,1)); os.utime(b,(2,2)); e=states(self.left,self.right)["a.txt"]
+        self.assertEqual(e.state, CompareState.SAME); self.assertIn("metadata differs", e.detail)
 
     def test_same_size_different_content_is_modified(self):
-        self.write(self.left, "a.bin", b"AAAA")
-        self.write(self.right, "a.bin", b"BBBB")
-        self.assertEqual(states(self.left, self.right)["a.bin"].state, CompareState.MODIFIED)
+        self.write(self.left,"a.bin",b"AAAA"); self.write(self.right,"a.bin",b"BBBB")
+        self.assertEqual(states(self.left,self.right)["a.bin"].state, CompareState.MODIFIED)
 
     def test_size_short_circuit(self):
-        self.write(self.left, "a.bin", b"A")
-        self.write(self.right, "a.bin", b"BBBB")
-        e = states(self.left, self.right)["a.bin"]
-        self.assertEqual(e.state, CompareState.MODIFIED)
-        self.assertEqual(e.detail, "size differs")
+        self.write(self.left,"a.bin",b"A"); self.write(self.right,"a.bin",b"BBBB")
+        self.assertEqual(states(self.left,self.right)["a.bin"].detail, "size differs")
 
     def test_left_and_right_only(self):
-        self.write(self.left, "left.txt", b"L")
-        self.write(self.right, "right.txt", b"R")
-        s = states(self.left, self.right)
-        self.assertEqual(s["left.txt"].state, CompareState.LEFT_ONLY)
-        self.assertEqual(s["right.txt"].state, CompareState.RIGHT_ONLY)
+        self.write(self.left,"left.txt",b"L"); self.write(self.right,"right.txt",b"R"); s=states(self.left,self.right)
+        self.assertEqual(s["left.txt"].state,CompareState.LEFT_ONLY); self.assertEqual(s["right.txt"].state,CompareState.RIGHT_ONLY)
 
     def test_type_mismatch(self):
-        self.write(self.left, "thing", b"file")
-        (self.right / "thing").mkdir()
-        self.assertEqual(states(self.left, self.right)["thing"].state, CompareState.MODIFIED)
+        self.write(self.left,"thing",b"file"); (self.right/"thing").mkdir()
+        self.assertEqual(states(self.left,self.right)["thing"].state,CompareState.MODIFIED)
 
     def test_nested_folder_reflects_child_difference(self):
-        self.write(self.left, "nested/a.txt", b"A")
-        self.write(self.right, "nested/a.txt", b"B")
-        s = states(self.left, self.right)
-        self.assertEqual(s["nested/a.txt"].state, CompareState.MODIFIED)
-        self.assertEqual(s["nested"].state, CompareState.MODIFIED)
+        self.write(self.left,"nested/a.txt",b"A"); self.write(self.right,"nested/a.txt",b"B"); s=states(self.left,self.right)
+        self.assertEqual(s["nested/a.txt"].state,CompareState.MODIFIED); self.assertEqual(s["nested"].state,CompareState.MODIFIED)
 
     def test_empty_folder_same(self):
-        (self.left / "empty").mkdir(); (self.right / "empty").mkdir()
-        self.assertEqual(states(self.left, self.right)["empty"].state, CompareState.SAME)
+        (self.left/"empty").mkdir(); (self.right/"empty").mkdir()
+        self.assertEqual(states(self.left,self.right)["empty"].state,CompareState.SAME)
 
     def test_unicode_and_zero_byte(self):
-        self.write(self.left, "日本語/é.txt", b"")
-        self.write(self.right, "日本語/é.txt", b"")
-        s = states(self.left, self.right)
-        self.assertEqual(s["日本語/é.txt"].state, CompareState.SAME)
+        self.write(self.left,"日本語/é.txt",b""); self.write(self.right,"日本語/é.txt",b"")
+        self.assertEqual(states(self.left,self.right)["日本語/é.txt"].state,CompareState.SAME)
 
     def test_full_byte_verification(self):
-        self.write(self.left, "a", b"x" * 1024)
-        self.write(self.right, "a", b"x" * 1024)
-        e = states(self.left, self.right, full=True)["a"]
-        self.assertEqual(e.state, CompareState.SAME)
-        self.assertEqual(e.detail, "byte-for-byte verified")
+        self.write(self.left,"a",b"x"*1024); self.write(self.right,"a",b"x"*1024)
+        self.assertEqual(states(self.left,self.right,full=True)["a"].detail,"byte-for-byte verified")
 
     def test_copy_requires_overwrite_and_then_replaces(self):
-        self.write(self.left, "a.txt", b"new")
-        self.write(self.right, "a.txt", b"old")
-        with self.assertRaises(FileExistsError):
-            copy_selected(self.left, self.right, "a.txt", overwrite=False)
-        copy_selected(self.left, self.right, "a.txt", overwrite=True)
-        self.assertEqual((self.right / "a.txt").read_bytes(), b"new")
+        self.write(self.left,"a.txt",b"new"); self.write(self.right,"a.txt",b"old")
+        with self.assertRaises(FileExistsError): copy_selected(self.left,self.right,"a.txt",overwrite=False)
+        copy_selected(self.left,self.right,"a.txt",overwrite=True)
+        self.assertEqual((self.right/"a.txt").read_bytes(),b"new")
 
     def test_copy_folder_replaces_existing_tree(self):
-        self.write(self.left, "d/new.txt", b"new")
-        self.write(self.right, "d/old.txt", b"old")
-        copy_selected(self.left, self.right, "d", overwrite=True)
-        self.assertTrue((self.right / "d/new.txt").exists())
-        self.assertFalse((self.right / "d/old.txt").exists())
+        self.write(self.left,"d/new.txt",b"new"); self.write(self.right,"d/old.txt",b"old")
+        copy_selected(self.left,self.right,"d",overwrite=True)
+        self.assertTrue((self.right/"d/new.txt").exists()); self.assertFalse((self.right/"d/old.txt").exists())
 
-    @unittest.skipUnless(hasattr(os, "symlink"), "symlink unavailable")
-    def test_symlink_is_compared_as_link_not_followed(self):
-        self.write(self.left, "target.txt", b"left")
-        self.write(self.right, "target.txt", b"right")
+    def test_same_root_is_rejected_without_mutation(self):
+        victim=self.write(self.left,"victim.txt",b"important")
+        with self.assertRaises(ValueError): copy_selected(self.left,self.left,"victim.txt",overwrite=True)
+        self.assertEqual(victim.read_bytes(),b"important")
+        with self.assertRaises(ValueError): compare_trees(self.left,self.left)
+
+    def test_overlapping_roots_are_rejected_both_directions(self):
+        child=self.left/"child"; child.mkdir()
+        with self.assertRaises(ValueError): validate_root_pair(self.left,child)
+        with self.assertRaises(ValueError): validate_root_pair(child,self.left)
+        with self.assertRaises(ValueError): compare_trees(self.left,child)
+
+    def test_relpath_escape_is_rejected(self):
+        outside=self.left.parent/"outside.txt"; outside.write_bytes(b"secret")
+        with self.assertRaises(ValueError): copy_selected(self.left,self.right,"../outside.txt",overwrite=True)
+        self.assertEqual(outside.read_bytes(),b"secret")
+
+    def test_failed_staging_preserves_existing_destination(self):
+        self.write(self.left,"a.txt",b"new-important"); dst=self.write(self.right,"a.txt",b"old-important")
+        with mock.patch("foldercompare.core.shutil.copy2", side_effect=OSError("simulated disk failure")):
+            with self.assertRaises(OSError): copy_selected(self.left,self.right,"a.txt",overwrite=True)
+        self.assertEqual(dst.read_bytes(),b"old-important")
+
+    def test_destination_change_during_staging_is_not_overwritten(self):
+        self.write(self.left,"a.txt",b"new-important"); dst=self.write(self.right,"a.txt",b"old-important")
+        from foldercompare import core
+        real_copy = core._copy_plain_object
+        def mutate_after_stage(source, staging):
+            real_copy(source, staging)
+            dst.write_bytes(b"external-change")
+        with mock.patch("foldercompare.core._copy_plain_object", side_effect=mutate_after_stage):
+            with self.assertRaises(OSError): copy_selected(self.left,self.right,"a.txt",overwrite=True)
+        self.assertEqual(dst.read_bytes(), b"external-change")
+
+    def test_failed_commit_rolls_back_existing_destination(self):
+        self.write(self.left,"a.txt",b"new-important"); dst=self.write(self.right,"a.txt",b"old-important")
+        real_replace=os.replace; calls=[]
+        def flaky(src,dest):
+            calls.append((Path(src),Path(dest)))
+            if len(calls)==2: raise OSError("simulated commit failure")
+            return real_replace(src,dest)
+        with mock.patch("foldercompare.core.os.replace", side_effect=flaky):
+            with self.assertRaises(OSError): copy_selected(self.left,self.right,"a.txt",overwrite=True)
+        self.assertEqual(dst.read_bytes(),b"old-important")
+
+    @unittest.skipUnless(hasattr(os,"symlink"),"symlink unavailable")
+    def test_symlink_is_compared_as_link_not_followed_and_copy_blocked(self):
+        self.write(self.left,"target.txt",b"left"); self.write(self.right,"target.txt",b"right")
         try:
-            os.symlink("target.txt", self.left / "link.txt")
-            os.symlink("target.txt", self.right / "link.txt")
-        except OSError as exc:
-            self.skipTest(f"symlink creation unavailable: {exc}")
-        scan = scan_tree(self.left)
-        self.assertEqual(scan["link.txt"].kind, EntryType.LINK)
-        s = states(self.left, self.right)
-        self.assertEqual(s["link.txt"].state, CompareState.SAME)
-        self.assertEqual(s["target.txt"].state, CompareState.MODIFIED)
+            os.symlink("target.txt",self.left/"link.txt"); os.symlink("target.txt",self.right/"link.txt")
+        except OSError as exc: self.skipTest(f"symlink unavailable: {exc}")
+        self.assertEqual(scan_tree(self.left)["link.txt"].kind,EntryType.LINK)
+        self.assertEqual(states(self.left,self.right)["link.txt"].state,CompareState.SAME)
+        with self.assertRaises(ValueError): copy_selected(self.left,self.right,"link.txt",overwrite=True)
+
+    @unittest.skipUnless(hasattr(os,"symlink"),"symlink unavailable")
+    def test_unreadable_link_fails_closed_not_same(self):
+        try:
+            os.symlink("one",self.left/"link"); os.symlink("two",self.right/"link")
+        except OSError as exc: self.skipTest(f"symlink unavailable: {exc}")
+        with mock.patch("foldercompare.core.os.readlink",side_effect=OSError("nope")):
+            e=states(self.left,self.right)["link"]
+        self.assertEqual(e.state,CompareState.MODIFIED); self.assertIn("unreadable",e.detail)
 
     def test_readonly_file_compares(self):
-        a = self.write(self.left, "ro.txt", b"same")
-        b = self.write(self.right, "ro.txt", b"same")
+        a=self.write(self.left,"ro.txt",b"same"); b=self.write(self.right,"ro.txt",b"same")
         a.chmod(stat.S_IREAD); b.chmod(stat.S_IREAD)
-        self.assertEqual(states(self.left, self.right)["ro.txt"].state, CompareState.SAME)
+        self.assertEqual(states(self.left,self.right)["ro.txt"].state,CompareState.SAME)
 
-    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO unavailable")
+    @unittest.skipUnless(hasattr(os,"mkfifo"),"FIFO unavailable")
     def test_special_type_fails_closed_not_same(self):
-        os.mkfifo(self.left / "pipe")
-        os.mkfifo(self.right / "pipe")
-        e = states(self.left, self.right)["pipe"]
-        self.assertEqual(e.kind, EntryType.OTHER)
-        self.assertEqual(e.state, CompareState.MODIFIED)
-        self.assertIn("unsupported", e.detail)
-        with self.assertRaises(ValueError):
-            copy_selected(self.left, self.right, "pipe", overwrite=True)
+        os.mkfifo(self.left/"pipe"); os.mkfifo(self.right/"pipe"); e=states(self.left,self.right)["pipe"]
+        self.assertEqual(e.kind,EntryType.OTHER); self.assertEqual(e.state,CompareState.MODIFIED)
+        with self.assertRaises(ValueError): copy_selected(self.left,self.right,"pipe",overwrite=True)
 
     def test_large_multichunk_file(self):
-        data = (b"0123456789abcdef" * 200000)
-        self.write(self.left, "large.bin", data)
-        self.write(self.right, "large.bin", data)
-        self.assertEqual(states(self.left, self.right)["large.bin"].state, CompareState.SAME)
+        data=b"0123456789abcdef"*200000; self.write(self.left,"large.bin",data); self.write(self.right,"large.bin",data)
+        self.assertEqual(states(self.left,self.right)["large.bin"].state,CompareState.SAME)
 
 
-if __name__ == "__main__":
-    unittest.main()
+if __name__ == "__main__": unittest.main()

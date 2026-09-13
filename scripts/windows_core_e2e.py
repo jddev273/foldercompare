@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from foldercompare.core import CompareState, compare_trees, copy_selected
+from foldercompare.core import CompareState, EntryType, compare_trees, copy_selected, scan_tree
 
 
 def states(left: Path, right: Path) -> dict[str, CompareState]:
@@ -45,6 +45,38 @@ def main() -> int:
         copy_selected(left, right, "modified.txt", overwrite=True)
         copy_selected(left, right, "left-only.txt", overwrite=False)
         copy_selected(right, left, "right-only.txt", overwrite=False)
+
+
+        # Safety regressions: same roots and overlapping roots must fail before mutation.
+        protected = left / "protected.txt"
+        protected.write_text("keep me", encoding="utf-8")
+        try:
+            copy_selected(left, left, "protected.txt", overwrite=True)
+            raise AssertionError("same-root copy was not blocked")
+        except ValueError:
+            pass
+        assert protected.read_text(encoding="utf-8") == "keep me"
+        child = left / "nested-root"
+        child.mkdir()
+        try:
+            compare_trees(left, child)
+            raise AssertionError("overlapping roots were not blocked")
+        except ValueError:
+            pass
+
+        # Windows junctions must be classified as links and never traversed.
+        import os, subprocess
+        target = tmp / "junction-target"
+        target.mkdir()
+        (target / "inside.txt").write_text("target", encoding="utf-8")
+        junction = left / "junction"
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(target)], check=True, capture_output=True, text=True)
+        scan = scan_tree(left)
+        assert scan["junction"].kind is EntryType.LINK, scan["junction"]
+        assert "junction/inside.txt" not in scan
+        os.rmdir(junction)
+        protected.unlink()
+        child.rmdir()
 
         after = states(left, right)
         bad = {path: state.value for path, state in after.items() if state is not CompareState.SAME}

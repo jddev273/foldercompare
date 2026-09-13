@@ -18,7 +18,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Build portable executable
         run: |
-          python -m pip install --upgrade pip pyinstaller
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller==6.22.3
           pyinstaller --noconfirm --clean --windowed --onefile --name FolderCompare foldercompare/__main__.py
       - name: Windows core end-to-end test
         run: python scripts/windows_core_e2e.py
@@ -29,7 +30,7 @@ jobs:
           Compress-Archive -Path dist/FolderCompare.exe -DestinationPath "FolderCompare-$tag-windows-x64-portable.zip"
       - name: Install Inno Setup
         shell: pwsh
-        run: choco install innosetup --no-progress -y
+        run: choco install innosetup --version=6.7.1 --no-progress -y
       - name: Build installer
         shell: pwsh
         run: |

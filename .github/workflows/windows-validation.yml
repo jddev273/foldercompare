@@ -23,11 +23,12 @@ jobs:
         run: python scripts/windows_core_e2e.py
       - name: Build portable executable
         run: |
-          python -m pip install --upgrade pip pyinstaller pillow
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller==6.22.3 pillow==12.3.0
           pyinstaller --noconfirm --clean --windowed --onefile --name FolderCompare foldercompare/__main__.py
       - name: Install Inno Setup
         shell: pwsh
-        run: choco install innosetup --no-progress -y
+        run: choco install innosetup --version=6.7.1 --no-progress -y
       - name: Build validation installer
         shell: pwsh
         run: |

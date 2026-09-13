@@ -143,12 +143,12 @@ def main() -> int:
             raise RuntimeError(f"Screenshot is suspiciously small: {output.stat().st_size} bytes")
         print(f"WINDOWS_VISUAL_PROOF_OK path={output} size={size[0]}x{size[1]} bytes={output.stat().st_size} hwnd={hwnd} pid={window_pid}")
 
-        # Demonstrate the destructive-action safeguard too: select modified.txt,
-        # press Copy →, and capture the modal before answering it. The proof
+        # Demonstrate the repair safeguard too: select modified.txt,
+        # press Copy selected → backup, and capture the modal before answering it. The proof
         # fixture and app viewport are fixed, so relative coordinates are stable.
         click_relative(hwnd, 0.13, 0.59)  # modified.txt row
-        click_relative(hwnd, 0.92, 0.33)  # Copy → button
-        dialog_hwnd, dialog_pid = find_window("Confirm exact copy", timeout=8.0)
+        click_relative(hwnd, 0.92, 0.33)  # Copy selected → backup button
+        dialog_hwnd, dialog_pid = find_window("Confirm copy to backup", timeout=8.0)
         dialog_size = capture_window(dialog_hwnd, copy_output, min_width=360, min_height=180)
         if copy_output.stat().st_size < 5_000:
             raise RuntimeError(f"Copy-dialog screenshot is suspiciously small: {copy_output.stat().st_size} bytes")
