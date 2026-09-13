@@ -143,9 +143,32 @@ class CompareCoreTests(unittest.TestCase):
         self.assertFalse(any(self.right.glob(".a.txt.foldercompare-stage-*")))
 
     def test_casefold_key_collision_fails_closed(self):
-        self.write(self.left, "A.txt", b"one")
-        self.write(self.left, "a.txt", b"two")
-        with mock.patch("foldercompare.core._scan_key", side_effect=lambda rel: rel.casefold()):
+        # Ordinary Windows directories cannot contain two case-only names, but
+        # a case-sensitive directory/share can expose them. Simulate the two
+        # distinct entries so the normalized-key guard is exercised on every OS.
+        base = self.left
+
+        class FakeEntry:
+            def __init__(self, name):
+                self.name = name
+                self.path = str(base / name)
+
+            def stat(self, *, follow_symlinks=False):
+                return type("Stat", (), {"st_mtime_ns": 0, "st_size": 1})()
+
+            def is_symlink(self):
+                return False
+
+            def is_dir(self, *, follow_symlinks=False):
+                return False
+
+            def is_file(self, *, follow_symlinks=False):
+                return True
+
+        entries = [FakeEntry("A.txt"), FakeEntry("a.txt")]
+        with mock.patch("foldercompare.core.os.scandir", return_value=entries), mock.patch(
+            "foldercompare.core._scan_key", side_effect=lambda rel: rel.casefold()
+        ):
             with self.assertRaises(OSError):
                 scan_tree(self.left)
 
