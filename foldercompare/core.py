@@ -161,7 +161,14 @@ def scan_tree(root: str | os.PathLike[str]) -> dict[str, ScanItem]:
 
 
 def _scan_signature(items: dict[str, ScanItem]) -> tuple[tuple[object, ...], ...]:
-    """Stable structural snapshot used to detect tree mutation during verification."""
+    """Stable content snapshot used to detect meaningful tree mutation.
+
+    Directory mtimes are deliberately excluded. They are metadata about the
+    directory container, not content identity, and Windows can report a changed
+    directory timestamp while the rescanned children are unchanged. Added,
+    removed, or renamed children are already caught by the key/path set; file
+    and link metadata remain part of the signature.
+    """
     return tuple(
         sorted(
             (
@@ -169,7 +176,7 @@ def _scan_signature(items: dict[str, ScanItem]) -> tuple[tuple[object, ...], ...
                 item.rel_path,
                 item.kind.value,
                 item.size,
-                item.mtime_ns,
+                None if item.kind is EntryType.DIRECTORY else item.mtime_ns,
                 item.link_target,
                 item.link_error,
             )
