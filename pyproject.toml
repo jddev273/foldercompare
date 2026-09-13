@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "foldercompare"
+version = "0.1.0"
+description = "Open two folders. See what differs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "FolderCompare contributors"}]
+keywords = ["folder", "directory", "diff", "compare", "windows"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+]
+
+[project.gui-scripts]
+foldercompare = "foldercompare.app:main"
+
+[tool.setuptools.packages.find]
+include = ["foldercompare*"]
