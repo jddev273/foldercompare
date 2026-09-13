@@ -1,10 +1,10 @@
 {
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Open two folders. See what differs.",
   "homepage": "https://github.com/jddev273/foldercompare",
   "license": "MIT",
-  "url": "https://github.com/jddev273/foldercompare/releases/download/v0.1.1/FolderCompare-v0.1.1-windows-x64-portable.zip",
-  "hash": "2805295bee701f4146c19af38ab0fae830bc3d968316c8bdb6d5d8fc3f9ae2db",
+  "url": "https://github.com/jddev273/foldercompare/releases/download/v0.1.2/FolderCompare-v0.1.2-windows-x64-portable.zip",
+  "hash": "a3be86c657646377a326b2f3be1a777b0d08cb22316d36ea65b333abdaae6221",
   "bin": "FolderCompare.exe",
   "shortcuts": [
     [
