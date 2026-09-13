@@ -6,7 +6,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from .core import CompareEntry, CompareState, EntryType, copy_selected, compare_trees, path_present, validate_root_pair
+from .core import CompareEntry, CompareState, compare_trees, validate_root_pair
 
 
 DISPLAY_STATE = {
@@ -30,7 +30,7 @@ class App(tk.Tk):
         self.full_var = tk.BooleanVar(value=False)
         self.filter_var = tk.StringVar(value="Problems only")
         self.status_var = tk.StringVar(value="Choose the original folder and the copy you want to verify.")
-        self.verdict_var = tk.StringVar(value="Comparison is read-only. Nothing changes until you explicitly copy an item.")
+        self.verdict_var = tk.StringVar(value="FolderCompare is read-only. It never copies, deletes, renames, or edits your files.")
         self.count_vars = {s: tk.StringVar(value="0") for s in CompareState}
         self.entries: dict[str, CompareEntry] = {}
         self.path_to_iid: dict[str, str] = {}
@@ -99,9 +99,7 @@ class App(tk.Tk):
         self.compare_btn.pack(side="left")
         self.full_check = ttk.Checkbutton(controls, text="Extra assurance: byte-for-byte verify matches", variable=self.full_var)
         self.full_check.pack(side="left", padx=14)
-        self.copy_btn = ttk.Button(controls, text="Copy missing file → backup", command=self._copy, state="disabled", underline=0)
-        self.copy_btn.pack(side="right")
-        self.bind_all("<Alt-c>", lambda _event: self.copy_btn.invoke())
+        ttk.Label(controls, text="Read-only: FolderCompare never changes either folder.", style="Sub.TLabel").pack(side="right")
 
         ttk.Label(outer, textvariable=self.verdict_var, style="Verdict.TLabel").pack(fill="x", pady=(0, 10))
 
@@ -141,7 +139,6 @@ class App(tk.Tk):
         self.tree.tag_configure("Modified", foreground="#9a5a00")
         self.tree.tag_configure("Left only", foreground="#2457a6")
         self.tree.tag_configure("Right only", foreground="#7a3e9d")
-        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._update_copy_state())
         ybar = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=ybar.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -158,8 +155,7 @@ class App(tk.Tk):
             self._comparison_roots = None
             self.final_results = []
             self._clear_tree()
-            self.copy_btn.configure(state="disabled")
-            self.verdict_var.set("Folders changed — verify again before copying anything.")
+            self.verdict_var.set("Folders changed — verify again before trusting these results.")
 
     def _verification_mode_edited(self, *_args) -> None:
         if self._busy:
@@ -168,7 +164,6 @@ class App(tk.Tk):
             self._comparison_roots = None
             self.final_results = []
             self._clear_tree()
-            self.copy_btn.configure(state="disabled")
             self.verdict_var.set("Verification mode changed — verify again.")
 
     def _on_close(self) -> None:
@@ -208,9 +203,6 @@ class App(tk.Tk):
             widget.configure(state="disabled" if busy else "normal")
         self.filter_box.configure(state="disabled" if busy else "readonly")
         self.full_check.configure(state="disabled" if busy else "normal")
-        self.copy_btn.configure(state="disabled")
-        if not busy:
-            self._update_copy_state()
 
     def compare(self) -> None:
         if self._busy:
@@ -244,7 +236,7 @@ class App(tk.Tk):
         if parent_path in self.path_to_iid:
             return self.path_to_iid[parent_path]
         parent_parent = self._ensure_parent(parent_path)
-        iid = self.tree.insert(parent_parent, "end", text=Path(parent_path).name, values=("", "Folder", "—", "—", ""), open=True)
+        iid = self.tree.insert(parent_parent, "end", text=Path(parent_path).name, values=("Contains shown result", "Folder", "—", "—", ""), open=True)
         self.path_to_iid[parent_path] = iid
         return iid
 
@@ -271,20 +263,9 @@ class App(tk.Tk):
 
     def _apply_filter(self) -> None:
         self._clear_tree()
-        first_repairable: str | None = None
         for entry in self.final_results:
             if self._matches_filter(entry):
                 self._upsert(entry)
-                if (first_repairable is None
-                        and entry.state is CompareState.LEFT_ONLY
-                        and entry.kind is EntryType.FILE
-                        and entry.left is not None):
-                    first_repairable = self.path_to_iid.get(entry.rel_path)
-        if first_repairable:
-            self.tree.selection_set(first_repairable)
-            self.tree.focus(first_repairable)
-            self.tree.see(first_repairable)
-        self._update_copy_state()
 
     def _drain_events(self) -> None:
         handled = 0
@@ -318,68 +299,8 @@ class App(tk.Tk):
                 self.verdict_var.set("Could not complete verification.")
                 messagebox.showerror("Verification failed", str(payload))
                 return
-            if kind == "copy_done":
-                destination = payload
-                self._set_busy(False)
-                self.status_var.set(f"Copy completed and verified: {destination}")
-                self.after(50, self.compare)
-                return
-            if kind == "copy_error":
-                self._set_busy(False)
-                self.status_var.set("Copy failed safely. Existing destination data was not overwritten.")
-                messagebox.showerror("Copy failed safely", str(payload))
-                return
         if self._busy:
             self.after(40, self._drain_events)
-
-    def _selected_entry(self) -> CompareEntry | None:
-        selected = self.tree.selection()
-        if not selected:
-            return None
-        return self.entries.get(selected[0])
-
-    def _update_copy_state(self) -> None:
-        entry = self._selected_entry()
-        allowed = (
-            not self._busy
-            and self._comparison_roots is not None
-            and entry is not None
-            and entry.state is CompareState.LEFT_ONLY
-            and entry.kind is EntryType.FILE
-            and entry.left is not None
-        )
-        self.copy_btn.configure(state="normal" if allowed else "disabled")
-
-    def _copy(self) -> None:
-        if self._busy or self._comparison_roots is None:
-            return
-        entry = self._selected_entry()
-        if entry is None or entry.state is not CompareState.LEFT_ONLY or entry.kind is not EntryType.FILE:
-            messagebox.showinfo("Nothing safe to copy", "Choose a file that is missing from the copy. Changed files and folders are compare-only in this safety-first release.")
-            return
-        src_root, dst_root = self._comparison_roots
-        src = Path(src_root) / entry.rel_path
-        dst = Path(dst_root) / entry.rel_path
-        if path_present(dst):
-            self._comparison_roots = None
-            self.copy_btn.configure(state="disabled")
-            messagebox.showerror("Destination changed", "The destination now exists. Verify the folders again; FolderCompare will not overwrite it.")
-            return
-        prompt = f"Original → Copy / backup\n\nSource:\n{src}\n\nDestination:\n{dst}\n\nThis action adds the missing file only. Existing data is never overwritten.\n\nProceed?"
-        if not messagebox.askyesno("Confirm copy to backup", prompt, icon="question", default="no"):
-            return
-        self._set_busy(True)
-        self.status_var.set("Staging and verifying the missing file before safe publication…")
-
-        def worker() -> None:
-            try:
-                copy_selected(src_root, dst_root, entry.rel_path, overwrite=False)
-                self._events.put(("copy_done", dst))
-            except Exception as exc:
-                self._events.put(("copy_error", exc))
-        threading.Thread(target=worker, daemon=True).start()
-        self.after(40, self._drain_events)
-
 
 def main() -> None:
     import argparse

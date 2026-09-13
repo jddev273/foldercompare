@@ -26,6 +26,7 @@ jobs:
             throw "Release version mismatch: tag=$tagVersion pyproject=$pyVersion runtime=$runtimeVersion"
           }
       - name: Build portable executable and notices
+        shell: powershell
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller==6.22.3 pillow==12.3.0
@@ -60,7 +61,7 @@ jobs:
         shell: pwsh
         run: ./scripts/windows_app_e2e.ps1 -PortableExe "dist\FolderCompare.exe" -InstallerExe "FolderCompare-${{ github.ref_name }}-windows-x64-setup.exe"
       - name: Real packaged Windows GUI proof
-        run: python scripts/windows_visual_proof.py --exe "dist\FolderCompare.exe" --output "windows-foldercompare-working.png" --copy-output "windows-copy-confirmation.png"
+        run: python scripts/windows_visual_proof.py --exe "dist\FolderCompare.exe" --output "windows-foldercompare-working.png" --read-only-output "windows-foldercompare-read-only.png"
       - name: Checksums
         shell: pwsh
         run: |

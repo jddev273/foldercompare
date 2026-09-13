@@ -12,9 +12,9 @@ It is not a sync engine and it is not a code-diff cockpit. Pick the **original**
 
 1. Choose the **Original folder**.
 2. Choose the **Copy / backup folder**.
-3. Click **Verify folders**. Review the problems; if a regular file is missing from the copy, FolderCompare can add that one file without overwriting anything already there.
+3. Click **Verify folders** and review the problems. FolderCompare does not modify either folder; use your normal copy/backup tool if you decide to repair a difference.
 
-Changed files, folders, links, junctions, and special filesystem objects are compare-only in this safety-first release.
+Everything in V1 is compare-only. FolderCompare never copies, overwrites, deletes, renames, or edits the selected folders.
 
 ## The four answers
 
@@ -31,17 +31,15 @@ Default verification uses SHA-256 over same-sized candidate files. **Extra assur
 
 ## Safety model
 
-Comparison itself is read-only.
+FolderCompare V1 is strictly read-only. It opens ordinary files for reading, reads directory/link metadata, and reports what it observed; it has no copy, overwrite, delete, rename, staging, or repair operation.
 
-FolderCompare deliberately rejects identical roots and parent/child root pairs. Copy operations are bound to the exact roots that produced the displayed results; editing either folder invalidates those results. Paths that escape a selected root are rejected.
-
-The one V1 mutation is **Copy missing file → backup**. It is intentionally add-only: only a regular file that is absent from the copy is eligible. FolderCompare stages and byte-verifies that file, then publishes it with an atomic **no-replace** operation. If anything creates the destination first, the repair aborts instead of overwriting it.
+FolderCompare deliberately rejects identical roots and parent/child root pairs because they are ambiguous verification targets. Editing either selected root invalidates displayed results in the GUI. Matching-file reads are bound to the filesystem object identity captured during scanning, and the final rescan discards results when ordinary path/type/object/size/timestamp/link changes are observed.
 
 **Trust boundary:** keep both folders idle while verification runs. FolderCompare reads a live filesystem; it does not take an OS-level snapshot or lock the trees, so results describe the files as read during that run rather than guaranteeing the folders cannot change immediately afterward. A final structural re-scan catches ordinary additions, removals, renames, size/timestamp changes, and link changes and discards the run when they are observed, but a process that rewrites same-size data while deliberately preserving timestamps can evade that metadata re-scan. Re-run verification after all copying/restoring activity has stopped.
 
-Existing files, whole folders, links, Windows junctions, and special filesystem objects are never overwritten by FolderCompare. They remain compare-only so verification cannot become a destructive sync operation.
+FolderCompare never writes to the selected trees. Existing files, missing files, folders, links, Windows junctions, and special filesystem objects all remain compare-only so verification cannot become a destructive sync operation.
 
-There is no sync, merge, delete command, rename detection, cloud account, AI, plugin system, or background filesystem mutation.
+There is no sync, repair, merge, copy, delete, rename command, cloud account, AI, plugin system, or background filesystem mutation.
 
 ## Installation
 
@@ -68,7 +66,7 @@ python -m unittest discover -s tests -v
 python fixtures/build_fixture.py ./fixture-corpus
 ```
 
-The suite includes same-content/different-metadata, same-size/different-content, nested and empty folders, Unicode, zero-byte and multi-chunk files, read-only files, special objects, links, identical/overlapping-root rejection, path traversal rejection, failed-staging preservation, no-replace destination races, case-only path ambiguity, and concurrent tree-mutation rejection. Windows CI adds packaged executable/install/copy-execution checks.
+The suite includes same-content/different-metadata, same-size/different-content, nested and empty folders, Unicode, zero-byte and multi-chunk files, read-only files, special objects, links, identical/overlapping-root rejection, case-only path ambiguity, concurrent tree-mutation rejection, object-identity replacement races, symlink replacement races, and explicit selected-tree preservation. Windows CI adds native junction/identity checks plus packaged executable/install/read-only GUI proof.
 
 ## Why this instead of WinMerge?
 

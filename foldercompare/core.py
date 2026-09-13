@@ -5,8 +5,7 @@ from enum import Enum
 from pathlib import Path
 import hashlib
 import os
-import shutil
-import uuid
+import stat
 from typing import Callable
 
 
@@ -33,6 +32,9 @@ class ScanItem:
     mtime_ns: int | None
     link_target: str | None = None
     link_error: str | None = None
+    device: int | None = None
+    inode: int | None = None
+    mode: int | None = None
 
 
 @dataclass(frozen=True)
@@ -49,10 +51,7 @@ def _is_junction(path: Path) -> bool:
     fn = getattr(os.path, "isjunction", None)
     if fn is None:
         return False
-    try:
-        return bool(fn(path))
-    except OSError:
-        return False
+    return bool(fn(path))
 
 
 def _path_identity(path: Path) -> str:
@@ -75,27 +74,11 @@ def validate_root_pair(left_root: str | os.PathLike[str], right_root: str | os.P
         raise ValueError("Choose two existing folders.")
     left_id, right_id = _path_identity(left), _path_identity(right)
     if left_id == right_id:
-        raise ValueError("Choose two different folders. FolderCompare blocks same-folder operations to protect your files.")
+        raise ValueError("Choose two different folders. A folder cannot be verified against itself.")
     if _is_within(left, right) or _is_within(right, left):
-        raise ValueError("Choose separate folders. One selected folder cannot be inside the other because copy operations would be unsafe.")
+        raise ValueError("Choose separate folders. One selected folder cannot be inside the other because overlapping verification roots are ambiguous.")
     return left, right
 
-
-def _safe_rel_path(rel_path: str) -> Path:
-    rel = Path(rel_path)
-    if not rel_path or rel.is_absolute() or rel.drive or any(part in ("..", "") for part in rel.parts):
-        raise ValueError("Unsafe relative path.")
-    if rel == Path(".") or any(part == "." for part in rel.parts):
-        raise ValueError("Unsafe relative path.")
-    return rel
-
-
-def _ensure_plain_parents(root: Path, rel: Path) -> None:
-    current = root
-    for part in rel.parts[:-1]:
-        current = current / part
-        if current.is_symlink() or _is_junction(current):
-            raise ValueError("Copy path passes through a link or junction; operation blocked for safety.")
 
 
 def _read_link(path: Path) -> tuple[str | None, str | None]:
@@ -137,28 +120,27 @@ def scan_tree(root: str | os.PathLike[str]) -> dict[str, ScanItem]:
             rel_path = (rel_base / entry.name).as_posix()
             path = Path(entry.path)
             try:
-                st = entry.stat(follow_symlinks=False)
+                # Use the same no-follow stat primitive used by verification.
+                # On Windows, DirEntry.stat() can report st_dev/st_ino as 0/0
+                # even when os.lstat()/os.fstat() expose the real identity.
+                st = os.lstat(path)
                 mtime_ns = getattr(st, "st_mtime_ns", None)
-            except OSError:
-                st = None
-                mtime_ns = None
-            if entry.is_symlink() or _is_junction(path):
-                target, error = _read_link(path)
-                put(ScanItem(rel_path, path, EntryType.LINK, None, mtime_ns, target, error))
-                continue
-            try:
-                if entry.is_dir(follow_symlinks=False):
-                    put(ScanItem(rel_path, path, EntryType.DIRECTORY, None, mtime_ns))
-                    walk(path, rel_base / entry.name)
-                elif entry.is_file(follow_symlinks=False):
-                    put(ScanItem(rel_path, path, EntryType.FILE, st.st_size if st else None, mtime_ns))
-                else:
-                    put(ScanItem(rel_path, path, EntryType.OTHER, st.st_size if st else None, mtime_ns))
             except OSError as exc:
-                put(ScanItem(rel_path, path, EntryType.OTHER, None, mtime_ns, None, f"{type(exc).__name__}: {exc}"))
+                put(ScanItem(rel_path, path, EntryType.OTHER, None, None, None, f"{type(exc).__name__}: {exc}"))
+                continue
+            identity = {"device": st.st_dev, "inode": st.st_ino, "mode": st.st_mode}
+            if stat.S_ISLNK(st.st_mode) or _is_junction(path):
+                target, error = _read_link(path)
+                put(ScanItem(rel_path, path, EntryType.LINK, None, mtime_ns, target, error, **identity))
+            elif stat.S_ISDIR(st.st_mode):
+                put(ScanItem(rel_path, path, EntryType.DIRECTORY, None, mtime_ns, **identity))
+                walk(path, rel_base / entry.name)
+            elif stat.S_ISREG(st.st_mode):
+                put(ScanItem(rel_path, path, EntryType.FILE, st.st_size, mtime_ns, **identity))
+            else:
+                put(ScanItem(rel_path, path, EntryType.OTHER, st.st_size, mtime_ns, **identity))
     walk(root_path, Path())
     return result
-
 
 def _scan_signature(items: dict[str, ScanItem]) -> tuple[tuple[object, ...], ...]:
     """Stable content snapshot used to detect meaningful tree mutation.
@@ -179,42 +161,89 @@ def _scan_signature(items: dict[str, ScanItem]) -> tuple[tuple[object, ...], ...
                 None if item.kind is EntryType.DIRECTORY else item.mtime_ns,
                 item.link_target,
                 item.link_error,
+                item.device,
+                item.inode,
+                item.mode,
             )
             for key, item in items.items()
         )
     )
 
 
-def _sha256_stable(path: Path, chunk_size: int = 1024 * 1024) -> tuple[str, bool]:
-    before = path.stat()
-    h = hashlib.sha256()
-    with path.open("rb") as f:
+def _stat_matches_scan(item: ScanItem, st: os.stat_result) -> bool:
+    if item.device is None or item.inode is None or item.mode is None:
+        return False
+    return (
+        st.st_dev == item.device
+        and st.st_ino == item.inode
+        and stat.S_IFMT(st.st_mode) == stat.S_IFMT(item.mode)
+        and st.st_size == item.size
+        and st.st_mtime_ns == item.mtime_ns
+    )
+
+
+def _open_scanned_file(item: ScanItem) -> int:
+    before = os.lstat(item.abs_path)
+    if not stat.S_ISREG(before.st_mode) or not _stat_matches_scan(item, before):
+        raise OSError("file identity changed before verification")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow:
+        flags |= nofollow
+    fd = os.open(item.abs_path, flags)
+    opened = os.fstat(fd)
+    if not stat.S_ISREG(opened.st_mode) or not _stat_matches_scan(item, opened):
+        os.close(fd)
+        raise OSError("file identity changed while opening for verification")
+    return fd
+
+
+def _sha256_stable(item: ScanItem, chunk_size: int = 1024 * 1024) -> tuple[str, bool]:
+    fd = _open_scanned_file(item)
+    try:
+        h = hashlib.sha256()
         while True:
-            chunk = f.read(chunk_size)
+            chunk = os.read(fd, chunk_size)
             if not chunk:
                 break
             h.update(chunk)
-    after = path.stat()
-    stable = (before.st_size, before.st_mtime_ns) == (after.st_size, after.st_mtime_ns)
-    return h.hexdigest(), stable
+        end_handle = os.fstat(fd)
+        after = os.lstat(item.abs_path)
+        stable = _stat_matches_scan(item, end_handle) and _stat_matches_scan(item, after)
+        return h.hexdigest(), stable
+    finally:
+        os.close(fd)
 
 
-def _byte_equal_stable(left: Path, right: Path, chunk_size: int = 1024 * 1024) -> tuple[bool, bool]:
-    lb, rb = left.stat(), right.stat()
-    same = True
-    with left.open("rb") as lf, right.open("rb") as rf:
+def _byte_equal_stable(left: ScanItem, right: ScanItem, chunk_size: int = 1024 * 1024) -> tuple[bool, bool]:
+    left_fd = _open_scanned_file(left)
+    try:
+        right_fd = _open_scanned_file(right)
+    except Exception:
+        os.close(left_fd)
+        raise
+    try:
+        same = True
         while True:
-            a = lf.read(chunk_size)
-            b = rf.read(chunk_size)
+            a = os.read(left_fd, chunk_size)
+            b = os.read(right_fd, chunk_size)
             if a != b:
                 same = False
                 break
             if not a:
                 break
-    la, ra = left.stat(), right.stat()
-    stable = ((lb.st_size, lb.st_mtime_ns) == (la.st_size, la.st_mtime_ns)
-              and (rb.st_size, rb.st_mtime_ns) == (ra.st_size, ra.st_mtime_ns))
-    return same, stable
+        left_end, right_end = os.fstat(left_fd), os.fstat(right_fd)
+        left_after, right_after = os.lstat(left.abs_path), os.lstat(right.abs_path)
+        stable = (
+            _stat_matches_scan(left, left_end)
+            and _stat_matches_scan(right, right_end)
+            and _stat_matches_scan(left, left_after)
+            and _stat_matches_scan(right, right_after)
+        )
+        return same, stable
+    finally:
+        os.close(left_fd)
+        os.close(right_fd)
 
 
 def _file_state(left: ScanItem, right: ScanItem, full_verify: bool) -> tuple[CompareState, str]:
@@ -222,19 +251,18 @@ def _file_state(left: ScanItem, right: ScanItem, full_verify: bool) -> tuple[Com
         return CompareState.MODIFIED, "size differs"
     metadata_same = left.mtime_ns == right.mtime_ns
     if full_verify:
-        same, stable = _byte_equal_stable(left.abs_path, right.abs_path)
+        same, stable = _byte_equal_stable(left, right)
         if not stable:
-            return CompareState.MODIFIED, "file changed during verification; run again"
+            return CompareState.MODIFIED, "file identity or content changed during verification; run again"
         return (CompareState.SAME if same else CompareState.MODIFIED,
                 "byte-for-byte verified" if same else "content differs")
-    left_hash, left_stable = _sha256_stable(left.abs_path)
-    right_hash, right_stable = _sha256_stable(right.abs_path)
+    left_hash, left_stable = _sha256_stable(left)
+    right_hash, right_stable = _sha256_stable(right)
     if not left_stable or not right_stable:
-        return CompareState.MODIFIED, "file changed during comparison; run again"
+        return CompareState.MODIFIED, "file identity or content changed during comparison; run again"
     if left_hash == right_hash:
         return CompareState.SAME, "SHA-256 content match" + ("" if metadata_same else "; metadata differs")
     return CompareState.MODIFIED, "content differs"
-
 
 def compare_trees(
     left_root: str | os.PathLike[str],
@@ -318,115 +346,3 @@ def compare_trees(
         raise OSError("Folder contents changed during verification; results discarded. Run again when both folders are idle.")
 
     return [results[k] for k in all_keys]
-
-
-def path_present(path: Path) -> bool:
-    return path.exists() or path.is_symlink() or _is_junction(path)
-
-
-def _path_signature(path: Path):
-    if not path_present(path):
-        return None
-    st = os.lstat(path)
-    return (st.st_dev, st.st_ino, st.st_mode, st.st_size, st.st_mtime_ns, path.is_symlink(), _is_junction(path))
-
-
-def _verify_staged_copy(source: Path, staging: Path) -> None:
-    if source.is_file():
-        same, stable = _byte_equal_stable(source, staging)
-        if not same or not stable:
-            raise OSError("Source changed or staged file failed final verification; destination was not changed.")
-        return
-    if source.is_dir():
-        results = compare_trees(source, staging, full_verify=True)
-        if any(entry.state is not CompareState.SAME for entry in results):
-            raise OSError("Source changed or staged folder failed final verification; destination was not changed.")
-        return
-    raise ValueError(f"Unsupported special filesystem type: {source}")
-
-
-def _remove_path(path: Path) -> None:
-    if _is_junction(path):
-        os.rmdir(path)
-    elif path.is_symlink():
-        path.unlink()
-    elif path.is_dir():
-        shutil.rmtree(path)
-    elif path.exists():
-        path.unlink()
-
-
-def _copy_plain_object(source: Path, staging: Path) -> None:
-    if source.is_symlink() or _is_junction(source):
-        raise ValueError("Copying links and Windows junctions is disabled in V1 for safety. FolderCompare still compares them without following them.")
-    if source.is_file():
-        shutil.copy2(source, staging, follow_symlinks=False)
-        same, stable = _byte_equal_stable(source, staging)
-        if not same or not stable:
-            raise OSError("Staged file did not verify against the source; destination was not changed.")
-        return
-    if source.is_dir():
-        staging.mkdir()
-        for entry in os.scandir(source):
-            child_source = Path(entry.path)
-            child_dest = staging / entry.name
-            if entry.is_symlink() or _is_junction(child_source):
-                raise ValueError("Folder contains a link or junction. Copy blocked so FolderCompare cannot accidentally follow or change link semantics.")
-            if entry.is_dir(follow_symlinks=False):
-                _copy_plain_object(child_source, child_dest)
-            elif entry.is_file(follow_symlinks=False):
-                shutil.copy2(child_source, child_dest, follow_symlinks=False)
-                same, stable = _byte_equal_stable(child_source, child_dest)
-                if not same or not stable:
-                    raise OSError(f"Staged file did not verify: {child_source}")
-            else:
-                raise ValueError(f"Unsupported special filesystem type: {child_source}")
-        return
-    raise ValueError(f"Unsupported special filesystem type: {source}")
-
-
-def _commit_missing_file_no_replace(staging: Path, destination: Path) -> None:
-    """Publish a staged regular file only if destination is still absent."""
-    if os.name == "nt":
-        # Windows rename fails when the destination already exists.
-        os.rename(staging, destination)
-        return
-    # POSIX hard-link creation is atomic and fails with EEXIST. Staging is a
-    # sibling regular file, so source and destination are on the same filesystem.
-    os.link(staging, destination, follow_symlinks=False)
-    staging.unlink()
-
-
-def copy_selected(source_root: str | os.PathLike[str], destination_root: str | os.PathLike[str], rel_path: str, *, overwrite: bool) -> tuple[Path, Path]:
-    """Repair one missing regular file from original to copy without overwriting."""
-    source_root_path, destination_root_path = validate_root_pair(source_root, destination_root)
-    rel = _safe_rel_path(rel_path)
-    _ensure_plain_parents(source_root_path, rel)
-    _ensure_plain_parents(destination_root_path, rel)
-    source = source_root_path / rel
-    destination = destination_root_path / rel
-    if not source.exists() and not source.is_symlink() and not _is_junction(source):
-        raise FileNotFoundError(source)
-    if _path_identity(source) == _path_identity(destination):
-        raise ValueError("Source and destination resolve to the same path; copy blocked.")
-    if source.is_symlink() or _is_junction(source) or not source.is_file():
-        raise ValueError("Safe repair copies only missing regular files. Folders, links, junctions, and special objects are compare-only.")
-    if _path_signature(destination) is not None:
-        raise FileExistsError("Destination already exists. FolderCompare will not overwrite existing data; review changed items manually.")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-
-    token = uuid.uuid4().hex
-    staging = destination.parent / f".{destination.name}.foldercompare-stage-{token}"
-    try:
-        _copy_plain_object(source, staging)
-        _verify_staged_copy(source, staging)
-        _ensure_plain_parents(destination_root_path, rel)
-        _commit_missing_file_no_replace(staging, destination)
-        return source, destination
-    except Exception:
-        if staging.exists() or staging.is_symlink() or _is_junction(staging):
-            try:
-                _remove_path(staging)
-            except OSError:
-                pass
-        raise

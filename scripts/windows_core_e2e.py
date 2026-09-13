@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 
@@ -9,11 +12,29 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from foldercompare.core import CompareState, EntryType, compare_trees, copy_selected, scan_tree
+from foldercompare import core
+from foldercompare.core import CompareState, EntryType, compare_trees, scan_tree
 
 
 def states(left: Path, right: Path) -> dict[str, CompareState]:
-    return {entry.rel_path.replace('\\', '/'): entry.state for entry in compare_trees(left, right)}
+    return {entry.rel_path.replace("\\", "/"): entry.state for entry in compare_trees(left, right)}
+
+
+def snapshot(root: Path):
+    rows = []
+    for path in sorted(root.rglob("*"), key=lambda p: str(p).casefold()):
+        st = os.lstat(path)
+        rel = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            payload = ("link", os.readlink(path))
+        elif stat.S_ISREG(st.st_mode):
+            payload = ("file", path.read_bytes())
+        elif stat.S_ISDIR(st.st_mode):
+            payload = ("dir", None)
+        else:
+            payload = ("other", None)
+        rows.append((rel, stat.S_IFMT(st.st_mode), st.st_size, st.st_mtime_ns, payload))
+    return tuple(rows)
 
 
 def main() -> int:
@@ -35,43 +56,31 @@ def main() -> int:
         (left / "nested" / "same.bin").write_bytes(bytes(range(64)))
         (right / "nested" / "same.bin").write_bytes(bytes(range(64)))
 
-        before = states(left, right)
-        assert before["same.txt"] is CompareState.SAME, before
-        assert before["modified.txt"] is CompareState.MODIFIED, before
-        assert before["left-only.txt"] is CompareState.LEFT_ONLY, before
-        assert before["right-only.txt"] is CompareState.RIGHT_ONLY, before
-        assert before["nested/same.bin"] is CompareState.SAME, before
+        before_snapshot = (snapshot(left), snapshot(right))
+        result = states(left, right)
+        assert result["same.txt"] is CompareState.SAME, result
+        assert result["modified.txt"] is CompareState.MODIFIED, result
+        assert result["left-only.txt"] is CompareState.LEFT_ONLY, result
+        assert result["right-only.txt"] is CompareState.RIGHT_ONLY, result
+        assert result["nested/same.bin"] is CompareState.SAME, result
+        assert (snapshot(left), snapshot(right)) == before_snapshot, "comparison mutated selected folders"
 
-        # Safety-first repair is add-only and one-way: a missing original-side file
-        # may be added to the copy, but changed/existing files are never replaced.
-        try:
-            copy_selected(left, right, "modified.txt", overwrite=True)
-            raise AssertionError("existing destination overwrite was not blocked")
-        except FileExistsError:
-            pass
-        assert (right / "modified.txt").read_text(encoding="utf-8") == "rite\n"
-        copy_selected(left, right, "left-only.txt", overwrite=False)
+        for forbidden in (
+            "copy_selected",
+            "_copy_plain_object",
+            "_verify_staged_copy",
+            "_commit_missing_file_no_replace",
+            "_remove_path",
+        ):
+            assert not hasattr(core, forbidden), f"mutation API still exposed: {forbidden}"
 
-        # A concurrently appearing destination must win; no-replace publication
-        # must never overwrite data another process created.
-        (left / "race.txt").write_text("source", encoding="utf-8")
-        (right / "race.txt").write_text("external", encoding="utf-8")
+        # Same and overlapping roots remain rejected even though V1 is read-only;
+        # they are ambiguous comparisons and previously formed part of the safety boundary.
         try:
-            copy_selected(left, right, "race.txt", overwrite=False)
-            raise AssertionError("existing race destination was not blocked")
-        except FileExistsError:
-            pass
-        assert (right / "race.txt").read_text(encoding="utf-8") == "external"
-
-        # Safety regressions: same roots and overlapping roots must fail before mutation.
-        protected = left / "protected.txt"
-        protected.write_text("keep me", encoding="utf-8")
-        try:
-            copy_selected(left, left, "protected.txt", overwrite=True)
-            raise AssertionError("same-root copy was not blocked")
+            compare_trees(left, left)
+            raise AssertionError("same-root verification was not blocked")
         except ValueError:
             pass
-        assert protected.read_text(encoding="utf-8") == "keep me"
         child = left / "nested-root"
         child.mkdir()
         try:
@@ -79,27 +88,35 @@ def main() -> int:
             raise AssertionError("overlapping roots were not blocked")
         except ValueError:
             pass
+        child.rmdir()
 
-        # Windows junctions must be classified as links and never traversed.
-        import os, subprocess
+        # Real Windows junctions must be classified as links and never traversed.
         target = tmp / "junction-target"
         target.mkdir()
         (target / "inside.txt").write_text("target", encoding="utf-8")
         junction = left / "junction"
-        subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(target)], check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         scan = scan_tree(left)
         assert scan["junction"].kind is EntryType.LINK, scan["junction"]
         assert "junction/inside.txt" not in scan
         os.rmdir(junction)
-        protected.unlink()
-        child.rmdir()
 
-        after = states(left, right)
-        assert after["left-only.txt"] is CompareState.SAME, after
-        assert after["modified.txt"] is CompareState.MODIFIED, after
-        assert after["right-only.txt"] is CompareState.RIGHT_ONLY, after
-        assert after["race.txt"] is CompareState.MODIFIED, after
-        print(f"WINDOWS_CORE_E2E_OK items={len(after)} add_only_repair=pass existing_destination_preserved=pass")
+        # Exact-object identity must be populated on native Windows and remain
+        # stable through a normal read-only verification pass.
+        scanned = scan_tree(left)["same.txt"]
+        assert scanned.device is not None
+        assert scanned.inode is not None
+        assert scanned.mode is not None
+        assert states(left, right)["same.txt"] is CompareState.SAME
+
+        assert (left / "left-only.txt").read_text(encoding="utf-8") == "left only\n"
+        assert not (right / "left-only.txt").exists(), "read-only verifier unexpectedly copied a missing file"
+        print(f"WINDOWS_CORE_E2E_OK items={len(result)} read_only=pass junction=pass identity=pass")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

@@ -51,6 +51,8 @@ separately as LICENSE.
 
 "@
 
-Set-Content -Path $OutputPath -Value ($header + ($sections -join "`r`n`r`n")) -Encoding utf8NoBOM
+$noticeText = $header + ($sections -join "`r`n`r`n")
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($OutputPath, $noticeText, $utf8NoBom)
 if ((Get-Item $OutputPath).Length -lt 1000) { throw "Third-party notices file is unexpectedly small" }
 Write-Host "WINDOWS_NOTICES_OK path=$OutputPath bytes=$((Get-Item $OutputPath).Length) sections=$($sections.Count)"

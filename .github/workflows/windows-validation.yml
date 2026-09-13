@@ -22,6 +22,7 @@ jobs:
       - name: Windows core end-to-end test
         run: python scripts/windows_core_e2e.py
       - name: Build portable executable and notices
+        shell: powershell
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller==6.22.3 pillow==12.3.0
@@ -40,7 +41,7 @@ jobs:
         run: ./scripts/windows_app_e2e.ps1 -PortableExe "dist\FolderCompare.exe" -InstallerExe "FolderCompare-validation-windows-x64-setup.exe"
       - name: Capture real Windows GUI proof
         shell: pwsh
-        run: python scripts/windows_visual_proof.py --exe "dist\FolderCompare.exe" --output "artifacts\windows-foldercompare-working.png" --copy-output "artifacts\windows-copy-confirmation.png"
+        run: python scripts/windows_visual_proof.py --exe "dist\FolderCompare.exe" --output "artifacts\windows-foldercompare-working.png" --read-only-output "artifacts\windows-foldercompare-read-only.png"
       - name: Upload Windows GUI proof
         uses: actions/upload-artifact@v4
         with:
