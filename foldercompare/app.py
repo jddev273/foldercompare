@@ -250,4 +250,21 @@ class App(tk.Tk):
 
 
 def main() -> None:
-    App().mainloop()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Compare two folders without sync.")
+    parser.add_argument("--left", help="Preselect the left folder")
+    parser.add_argument("--right", help="Preselect the right folder")
+    parser.add_argument("--verify", action="store_true", help="Verify matching files byte-for-byte")
+    args = parser.parse_args()
+
+    app = App()
+    if args.left:
+        app.left_var.set(args.left)
+    if args.right:
+        app.right_var.set(args.right)
+    if args.verify:
+        app.full_var.set(True)
+    if args.left and args.right:
+        app.after(250, app.compare)
+    app.mainloop()

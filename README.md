@@ -1,5 +1,7 @@
 # FolderCompare
 
+![Windows Validation](https://github.com/jddev273/foldercompare/actions/workflows/windows-validation.yml/badge.svg)
+
 **Open two folders. See what differs.**
 
 FolderCompare is a deliberately narrow, Windows-first open-source folder comparison utility. It shows four states — **Same**, **Modified**, **Left only**, and **Right only** — and lets you explicitly copy a selected item in either direction.

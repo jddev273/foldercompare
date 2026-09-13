@@ -23,7 +23,7 @@ jobs:
         run: python scripts/windows_core_e2e.py
       - name: Build portable executable
         run: |
-          python -m pip install --upgrade pip pyinstaller
+          python -m pip install --upgrade pip pyinstaller pillow
           pyinstaller --noconfirm --clean --windowed --onefile --name FolderCompare foldercompare/__main__.py
       - name: Install Inno Setup
         shell: pwsh
@@ -36,3 +36,12 @@ jobs:
       - name: Installed and portable Windows app test
         shell: pwsh
         run: ./scripts/windows_app_e2e.ps1 -PortableExe "dist\FolderCompare.exe" -InstallerExe "FolderCompare-validation-windows-x64-setup.exe"
+      - name: Capture real Windows GUI proof
+        shell: pwsh
+        run: python scripts/windows_visual_proof.py --exe "dist\FolderCompare.exe" --output "artifacts\windows-foldercompare-working.png"
+      - name: Upload Windows GUI proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-gui-proof
+          path: artifacts/windows-foldercompare-working.png
+          if-no-files-found: error
