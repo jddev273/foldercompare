@@ -1,0 +1,38 @@
+name: Windows Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-e2e:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Windows core end-to-end test
+        run: python scripts/windows_core_e2e.py
+      - name: Build portable executable
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          pyinstaller --noconfirm --clean --windowed --onefile --name FolderCompare foldercompare/__main__.py
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Build validation installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DMyAppVersion=validation" packaging\foldercompare.iss
+          Move-Item release\FolderCompare-setup.exe "FolderCompare-validation-windows-x64-setup.exe"
+      - name: Installed and portable Windows app test
+        shell: pwsh
+        run: ./scripts/windows_app_e2e.ps1 -PortableExe "dist\FolderCompare.exe" -InstallerExe "FolderCompare-validation-windows-x64-setup.exe"
