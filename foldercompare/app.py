@@ -70,8 +70,9 @@ class App(tk.Tk):
         header = ttk.Frame(outer)
         header.pack(fill="x", pady=(0, 14))
         ttk.Label(header, text="FolderCompare", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(header, text="Did the files copy? Verify their contents.", style="Verdict.TLabel").pack(anchor="w", pady=(3, 0))
-        ttk.Label(header, text="Verify ordinary file data and tree presence in a copy, backup, migration, or restored drive — without sync or merge rules.", style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
+        ttk.Label(header, text="Did the files copy? Check their contents.", style="Verdict.TLabel").pack(anchor="w", pady=(3, 0))
+        ttk.Label(header, text="Compare ordinary file data and tree presence in a copy, backup, migration, or restored drive — without sync or merge rules.", style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
+        ttk.Label(header, text="Keep both folders idle while verification runs; live-changing folders cannot provide snapshot certainty.", style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
 
         pickers = ttk.Frame(outer)
         pickers.pack(fill="x")
@@ -304,10 +305,10 @@ class App(tk.Tk):
                     self.count_vars[s].set(str(n))
                 problems = len(results) - final_counts[CompareState.SAME]
                 if problems == 0:
-                    self.verdict_var.set(f"Everything matches — {len(results)} items verified by content.")
+                    self.verdict_var.set(f"No differences found in this verification — {len(results)} items matched by content.")
                 else:
-                    self.verdict_var.set(f"{problems} items need attention — {final_counts[CompareState.SAME]} verified matches are hidden by default.")
-                self.status_var.set("Verification complete. 'Verified' always includes a content check.")
+                    self.verdict_var.set(f"{problems} items need attention — {final_counts[CompareState.SAME]} content matches are hidden by default.")
+                self.status_var.set("Verification complete. Results describe files as read during this run; re-run if either folder may still be changing.")
                 self._set_busy(False)
                 self._apply_filter()
                 return

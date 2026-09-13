@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5 - 2026-09-13
+
+- Fail closed when normalized cross-root paths differ in exact spelling, preventing case-sensitive Windows paths from being falsely verified.
+- Re-scan both trees before returning results and discard verification if paths, types, sizes, timestamps, or link state changed during the run.
+- Add deterministic regressions for case-only cross-root names and files added during verification.
+- Extend packaged Windows GUI proof to execute and verify the add-only missing-file repair, not just open its confirmation dialog.
+
 ## 0.1.4 - 2026-09-13
 
 - Make repair add-only: copy only missing regular files and never overwrite existing destination data.

@@ -171,6 +171,23 @@ def main() -> int:
             f"size={dialog_size[0]}x{dialog_size[1]} bytes={copy_output.stat().st_size} "
             f"hwnd={dialog_hwnd} pid={dialog_pid}"
         )
+
+        # Exercise the actual packaged-app mutation path, not just the dialog.
+        # IDYES=6 is the native Windows MessageBox Yes command used by Tk.
+        if not ctypes.windll.user32.PostMessageW(dialog_hwnd, 0x0111, 6, 0):  # WM_COMMAND
+            raise RuntimeError("Could not activate Yes in copy confirmation")
+        copied = right / "left-only.txt"
+        deadline = time.time() + 8.0
+        while time.time() < deadline and not copied.exists():
+            time.sleep(0.1)
+        if not copied.exists():
+            raise RuntimeError("Packaged GUI copy did not create the missing file")
+        if copied.read_bytes() != (left / "left-only.txt").read_bytes():
+            raise RuntimeError("Packaged GUI copy created content that differs from source")
+        leftovers = list(right.glob(".left-only.txt.foldercompare-stage-*"))
+        if leftovers:
+            raise RuntimeError(f"Packaged GUI copy left staging artifacts behind: {leftovers}")
+        print(f"WINDOWS_COPY_EXECUTION_OK destination={copied} bytes={copied.stat().st_size} staging_leftovers=0")
     finally:
         subprocess.run(["taskkill", "/IM", "FolderCompare.exe", "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:

@@ -160,6 +160,24 @@ def scan_tree(root: str | os.PathLike[str]) -> dict[str, ScanItem]:
     return result
 
 
+def _scan_signature(items: dict[str, ScanItem]) -> tuple[tuple[object, ...], ...]:
+    """Stable structural snapshot used to detect tree mutation during verification."""
+    return tuple(
+        sorted(
+            (
+                key,
+                item.rel_path,
+                item.kind.value,
+                item.size,
+                item.mtime_ns,
+                item.link_target,
+                item.link_error,
+            )
+            for key, item in items.items()
+        )
+    )
+
+
 def _sha256_stable(path: Path, chunk_size: int = 1024 * 1024) -> tuple[str, bool]:
     before = path.stat()
     h = hashlib.sha256()
@@ -242,6 +260,15 @@ def compare_trees(
             entry = CompareEntry(rel, CompareState.RIGHT_ONLY, kind, None, right, "missing from original")
         elif right is None:
             entry = CompareEntry(rel, CompareState.LEFT_ONLY, kind, left, None, "missing from copy")
+        elif left.rel_path != right.rel_path:
+            entry = CompareEntry(
+                left.rel_path,
+                CompareState.MODIFIED,
+                left.kind,
+                left,
+                right,
+                f"path spelling differs: {left.rel_path!r} vs {right.rel_path!r}; cannot safely verify",
+            )
         elif left.kind != right.kind:
             entry = CompareEntry(rel, CompareState.MODIFIED, left.kind, left, right, f"type differs: {left.kind.value} vs {right.kind.value}")
         elif left.kind == EntryType.DIRECTORY:
@@ -253,16 +280,12 @@ def compare_trees(
             else:
                 same = left.link_target == right.link_target
                 detail = "link target matches" if same else "link target differs"
-                if same and left.rel_path != right.rel_path:
-                    detail += "; name case differs"
                 entry = CompareEntry(rel, CompareState.SAME if same else CompareState.MODIFIED, EntryType.LINK, left, right, detail)
         elif left.kind == EntryType.FILE:
             try:
                 state, detail = _file_state(left, right, full_verify)
             except OSError as exc:
                 state, detail = CompareState.MODIFIED, f"read error: {exc}"
-            if state is CompareState.SAME and left.rel_path != right.rel_path:
-                detail += "; name case differs"
             entry = CompareEntry(rel, state, EntryType.FILE, left, right, detail)
         else:
             entry = CompareEntry(rel, CompareState.MODIFIED, EntryType.OTHER, left, right, "unsupported special filesystem type")
@@ -277,12 +300,15 @@ def compare_trees(
         state = CompareState.SAME if all(s is CompareState.SAME for s in states) else CompareState.MODIFIED
         rel = left.rel_path
         detail = "subtree content-equivalent" if state is CompareState.SAME else "subtree differs"
-        if state is CompareState.SAME and left.rel_path != right.rel_path:
-            detail += "; name case differs"
         entry = CompareEntry(rel, state, EntryType.DIRECTORY, left, right, detail)
         results[key] = entry
         if on_entry:
             on_entry(entry)
+
+    left_after = scan_tree(left_root_path)
+    right_after = scan_tree(right_root_path)
+    if _scan_signature(left_map) != _scan_signature(left_after) or _scan_signature(right_map) != _scan_signature(right_after):
+        raise OSError("Folder contents changed during verification; results discarded. Run again when both folders are idle.")
 
     return [results[k] for k in all_keys]
 

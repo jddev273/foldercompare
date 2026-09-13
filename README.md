@@ -37,6 +37,8 @@ FolderCompare deliberately rejects identical roots and parent/child root pairs. 
 
 The one V1 mutation is **Copy missing file → backup**. It is intentionally add-only: only a regular file that is absent from the copy is eligible. FolderCompare stages and byte-verifies that file, then publishes it with an atomic **no-replace** operation. If anything creates the destination first, the repair aborts instead of overwriting it.
 
+**Trust boundary:** keep both folders idle while verification runs. FolderCompare reads a live filesystem; it does not take an OS-level snapshot or lock the trees, so results describe the files as read during that run rather than guaranteeing the folders cannot change immediately afterward. A final structural re-scan catches ordinary additions, removals, renames, size/timestamp changes, and link changes and discards the run when they are observed, but a process that rewrites same-size data while deliberately preserving timestamps can evade that metadata re-scan. Re-run verification after all copying/restoring activity has stopped.
+
 Existing files, whole folders, links, Windows junctions, and special filesystem objects are never overwritten by FolderCompare. They remain compare-only so verification cannot become a destructive sync operation.
 
 There is no sync, merge, delete command, rename detection, cloud account, AI, plugin system, or background filesystem mutation.
@@ -66,7 +68,7 @@ python -m unittest discover -s tests -v
 python fixtures/build_fixture.py ./fixture-corpus
 ```
 
-The suite includes same-content/different-metadata, same-size/different-content, nested and empty folders, Unicode, zero-byte and multi-chunk files, read-only files, special objects, links, identical/overlapping-root rejection, path traversal rejection, failed-staging preservation, and failed-commit rollback. Windows CI adds packaged executable/install checks.
+The suite includes same-content/different-metadata, same-size/different-content, nested and empty folders, Unicode, zero-byte and multi-chunk files, read-only files, special objects, links, identical/overlapping-root rejection, path traversal rejection, failed-staging preservation, no-replace destination races, case-only path ambiguity, and concurrent tree-mutation rejection. Windows CI adds packaged executable/install/copy-execution checks.
 
 ## Why this instead of WinMerge?
 

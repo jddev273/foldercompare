@@ -142,6 +142,34 @@ class CompareCoreTests(unittest.TestCase):
         self.assertFalse(dst.exists())
         self.assertFalse(any(self.right.glob(".a.txt.foldercompare-stage-*")))
 
+    def test_cross_side_case_only_name_never_verifies_same(self):
+        self.write(self.left, "A.txt", b"MATCH")
+        self.write(self.right, "a.txt", b"MATCH")
+        with mock.patch("foldercompare.core._scan_key", side_effect=lambda rel: rel.casefold()):
+            result = compare_trees(self.left, self.right, full_verify=True)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].state, CompareState.MODIFIED)
+        self.assertIn("path spelling differs", result[0].detail)
+
+    def test_tree_mutation_during_verification_fails_closed(self):
+        self.write(self.left, "same.txt", b"same")
+        self.write(self.right, "same.txt", b"same")
+        from foldercompare import core
+        real_scan = core.scan_tree
+        call_count = 0
+
+        def mutate_after_first_scan(root):
+            nonlocal call_count
+            snapshot = real_scan(root)
+            call_count += 1
+            if call_count == 1:
+                self.write(self.left, "added-during-verify.txt", b"late")
+            return snapshot
+
+        with mock.patch("foldercompare.core.scan_tree", side_effect=mutate_after_first_scan):
+            with self.assertRaisesRegex(OSError, "changed during verification"):
+                compare_trees(self.left, self.right, full_verify=True)
+
     def test_casefold_key_collision_fails_closed(self):
         # Ordinary Windows directories cannot contain two case-only names, but
         # a case-sensitive directory/share can expose them. Simulate the two
