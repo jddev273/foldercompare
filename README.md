@@ -6,6 +6,10 @@
 
 FolderCompare is a deliberately narrow, Windows-first open-source folder comparison utility. It shows four states — **Same**, **Modified**, **Left only**, and **Right only** — and lets you explicitly copy a selected item in either direction.
 
+![FolderCompare running on Windows](docs/windows-foldercompare-working.png)
+
+*Actual packaged `FolderCompare.exe` running on GitHub's Windows runner against a real comparison fixture with byte-for-byte verification enabled. Windows Validation also installs the Inno Setup build, launches the installed app, and uninstalls it.*
+
 ## What V1 does
 
 - Progressive comparison: path → type → size → metadata → content/hash as needed.
